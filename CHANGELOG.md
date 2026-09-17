@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/lukislp/studylife-display/compare/v1.3.0...v1.4.0) (2026-09-17)
+
+
+### Features
+
+* connect the account from the web UI, semester layout and web settings ([#11](https://github.com/lukislp/studylife-display/issues/11)) ([7318532](https://github.com/lukislp/studylife-display/commit/73185324adec83c1b1965e35de5e6660fec8c60d))
+
 # [1.3.0](https://github.com/lukislp/studylife-display/compare/v1.2.0...v1.3.0) (2026-09-17)
 
 
