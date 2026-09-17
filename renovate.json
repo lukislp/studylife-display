@@ -1,6 +1,38 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Only the uv version pinned in the setup-uv steps of .github/workflows/ci.yml. Dependabot already covers the `uses:` SHA pins and pyproject/uv.lock, but has no manager for the `version:` input of astral-sh/setup-uv, so that pin would otherwise never move. Every other manager stays off so the two bots never compete for the same dependency; this repo has no Kubernetes manifests or Dockerfile.",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    ":disableDependencyDashboard"
+  ],
+  "enabledManagers": [
+    "github-actions"
+  ],
+  "semanticCommits": "enabled",
+  "semanticCommitType": "fix",
+  "semanticCommitScope": "ci",
+  "labels": [
+    "dependencies"
+  ],
+  "schedule": [
+    "at any time"
+  ],
+  "packageRules": [
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "enabled": false
+    },
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "astral-sh/uv"
+      ],
+      "enabled": true,
+      "automerge": true
+    }
   ]
 }
