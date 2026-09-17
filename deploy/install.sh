@@ -7,8 +7,26 @@
 #   sudo bash studylife-display/deploy/install.sh
 #
 # Re-running it updates the checkout under /opt/studylife-display/src and reinstalls the
-# package; the environment file and the cached snapshot are left alone.
+# package; the environment file and the cached snapshot are left alone. The checkout is the
+# latest release tag; `--main` tracks origin/main instead (for developers). Later updates:
+# deploy/update.sh.
 set -euo pipefail
+
+TRACK_MAIN=0
+for arg in "$@"; do
+  case "$arg" in
+    --main) TRACK_MAIN=1 ;;
+    -h|--help)
+      echo "usage: sudo bash $0 [--main]"
+      echo "  --main  check out origin/main instead of the latest release tag"
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $arg (usage: sudo bash $0 [--main])" >&2
+      exit 1
+      ;;
+  esac
+done
 
 REPO_URL="${REPO_URL:-https://github.com/lukislp/studylife-display.git}"
 PREFIX=/opt/studylife-display
@@ -34,15 +52,30 @@ raspi-config nonint do_spi 0
 
 echo "==> source checkout at $SRC"
 mkdir -p "$PREFIX"
-if [ -d "$SRC/.git" ]; then
-  git -C "$SRC" fetch --tags --prune
-  git -C "$SRC" reset --hard origin/main
-elif [ -d "$HERE/.git" ]; then
-  # Installing from a checkout somewhere else (the usual first run): copy it into place.
-  git clone "$HERE" "$SRC"
-  git -C "$SRC" remote set-url origin "$REPO_URL"
+if [ ! -d "$SRC/.git" ]; then
+  if [ -d "$HERE/.git" ]; then
+    # Installing from a checkout somewhere else (the usual first run): copy it into place.
+    git clone "$HERE" "$SRC"
+    git -C "$SRC" remote set-url origin "$REPO_URL"
+  else
+    git clone "$REPO_URL" "$SRC"
+  fi
+fi
+# The tags come from GitHub, not from the local copy (which may be shallow or untagged).
+git -C "$SRC" fetch --tags --prune origin
+if [ "$TRACK_MAIN" -eq 1 ]; then
+  echo "    tracking origin/main (--main)"
+  git -C "$SRC" checkout --force --quiet -B main origin/main
 else
-  git clone "$REPO_URL" "$SRC"
+  # The newest vX.Y.Z tag; the version the package reports comes from it (hatch-vcs).
+  RELEASE_TAG="$(git -C "$SRC" tag --list 'v*' --sort=-version:refname | head -n 1)"
+  if [ -z "$RELEASE_TAG" ]; then
+    echo "    warning: no release tag found, using origin/main"
+    git -C "$SRC" checkout --force --quiet -B main origin/main
+  else
+    echo "    release $RELEASE_TAG"
+    git -C "$SRC" checkout --force --detach --quiet "$RELEASE_TAG"
+  fi
 fi
 
 echo "==> virtualenv at $VENV"
@@ -130,6 +163,16 @@ STUDYLIFE_TIMEZONE=Europe/Berlin
 # Copy of the layout choice on the boot partition, restored at boot so that it survives the
 # overlay filesystem. Empty disables it.
 # DISPLAY_PERSIST_PATH=/boot/firmware/studylife-display/settings.json
+# Panel mounted upside down: 180 (default 0).
+# DISPLAY_ROTATE=0
+# Quiet hours (HH-HH or HH:MM-HH:MM, may wrap past midnight): no scheduled refresh inside.
+# DISPLAY_QUIET_HOURS=23-7
+# One full clear per day against ghosting, at this time (empty = off).
+# DISPLAY_CLEAR_AT=04:00
+# Show the "data is stale" screen once the cached snapshot is older than this many hours.
+# DISPLAY_STALE_ERROR_HOURS=24
+# Let the web interface ask GitHub (once per 6 h) whether a newer release exists.
+# DISPLAY_UPDATE_CHECK=false
 EOF
     if [ "$PERSIST_PATH" != "$DEFAULT_PERSIST_PATH" ]; then
       printf 'DISPLAY_PERSIST_PATH=%s\n' "$PERSIST_PATH"
@@ -183,4 +226,6 @@ Installed. Next steps:
 The timer refreshes the panel every 5 minutes: systemctl list-timers studylife-display.timer
 Layouts are switched in the web interface:  http://$(hostname).local:8795/
   (journalctl -u studylife-display-web.service -n 50 if it does not answer)
+Health for an uptime monitor:               http://$(hostname).local:8795/healthz
+Later updates:                              sudo bash $SRC/deploy/update.sh [--check]
 EOF

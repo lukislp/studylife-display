@@ -12,12 +12,22 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import httpx
+from PIL import Image
 
+from studylife_display import package_version
 from studylife_display.config import Settings
+from studylife_display.daily_clear import (
+    clear_due,
+    load_last_clear,
+    parse_clear_at,
+    save_last_clear,
+)
 from studylife_display.driver import Display, FileDisplay, WaveshareDisplay
 from studylife_display.layouts.auto import resolve_layout
+from studylife_display.layouts.error import format_age, render_error
 from studylife_display.model import DashboardData, build_dashboard
 from studylife_display.panel_lock import PanelLockTimeout, panel_lock
+from studylife_display.quiet_hours import in_quiet_hours, quiet_hours_end
 from studylife_display.render import render
 from studylife_display.sample import sample_payloads
 from studylife_display.settings_store import (
@@ -27,17 +37,33 @@ from studylife_display.settings_store import (
     valid_choices,
 )
 from studylife_display.snapshot import Snapshot, fetch_snapshot, load_snapshot, save_snapshot
+from studylife_display.status_store import (
+    NO_DATA,
+    REJECTED,
+    STALE,
+    TRANSIENT,
+    LastError,
+    update_status,
+)
 from studylife_display.studylife_client import StudyLifeApiError, StudyLifeClient
 from studylife_display.times import zone
 from studylife_display.web import MIN_TOKEN_LENGTH, serve_web
 
 log = logging.getLogger("studylife_display")
 
+# HTTP statuses that mean "the key is wrong or lacks a scope": not transient, never healed
+# by waiting, so the panel says so instead of showing an ageing cached dashboard.
+REJECTED_STATUSES = frozenset({401, 403})
+
 
 def make_display(settings: Settings, output_override: str | None = None) -> Display:
-    if output_override is not None or settings.display_driver == "file":
-        return FileDisplay(output_override or settings.display_output_path)
-    return WaveshareDisplay()
+    """The configured driver with the configured rotation; an explicit output path (the
+    `preview` command) always means an upright PNG, whatever the panel's mounting."""
+    if output_override is not None:
+        return FileDisplay(output_override)
+    if settings.display_driver == "file":
+        return FileDisplay(settings.display_output_path, settings.display_rotate)
+    return WaveshareDisplay(settings.display_rotate)
 
 
 def build(snapshot: Snapshot, now: datetime, tz: ZoneInfo) -> DashboardData:
@@ -51,11 +77,24 @@ def build(snapshot: Snapshot, now: datetime, tz: ZoneInfo) -> DashboardData:
     )
 
 
-def show(display: Display, data: DashboardData, language: str, layout: str = "classic") -> None:
+def present(display: Display, image: Image.Image, clear_first: bool = False) -> None:
+    """Puts one frame on the panel (after a full clear when asked) and always sleeps it."""
     try:
-        display.show(render(data, language, layout))
+        if clear_first:
+            display.clear()
+        display.show(image)
     finally:
         display.sleep()
+
+
+def show(
+    display: Display,
+    data: DashboardData,
+    language: str,
+    layout: str = "classic",
+    clear_first: bool = False,
+) -> None:
+    present(display, render(data, language, layout), clear_first)
 
 
 def _client(settings: Settings) -> StudyLifeClient:
@@ -66,44 +105,172 @@ def _client(settings: Settings) -> StudyLifeClient:
     )
 
 
+def _record(state_dir: Path, tz: ZoneInfo, **changes: object) -> None:
+    """Updates status.json; a state directory that cannot be written is a warning, the
+    panel still gets its frame."""
+    try:
+        update_status(state_dir, tz, **changes)
+    except OSError as exc:
+        log.warning("could not write the status file in %s: %s", state_dir, exc)
+
+
+def _put_on_panel(
+    settings: Settings,
+    state_dir: Path,
+    tz: ZoneInfo,
+    now: datetime,
+    image: Image.Image,
+    output_override: str | None,
+    clear_first: bool,
+) -> bool:
+    """Shows `image` under the panel lock and records the moment; False when another
+    refresh held the lock for too long (nothing was drawn then)."""
+    display = make_display(settings, output_override)
+    try:
+        with panel_lock(state_dir):
+            present(display, image, clear_first)
+    except PanelLockTimeout as exc:
+        log.error("%s - another refresh is stuck, giving up", exc)
+        return False
+    if clear_first:
+        try:
+            save_last_clear(state_dir, now)
+        except OSError as exc:
+            log.warning("could not record the clear in %s: %s", state_dir, exc)
+    _record(state_dir, tz, last_panel_update_at=now)
+    return True
+
+
+def _show_error(
+    settings: Settings,
+    state_dir: Path,
+    tz: ZoneInfo,
+    now: datetime,
+    kind: str,
+    detail: str,
+    last_error: str,
+    output_override: str | None,
+    clear_first: bool,
+) -> bool:
+    image = render_error(kind, detail, settings.display_language, now, last_error)
+    return _put_on_panel(settings, state_dir, tz, now, image, output_override, clear_first)
+
+
 def refresh_panel(
     settings: Settings,
     layout_choice: str | None = None,
     output_override: str | None = None,
+    clear_first: bool = False,
 ) -> int:
-    """Fetch -> build -> resolve layout -> render -> show, under the panel lock. A fetch
-    failure falls back to the cached snapshot (rendered with the stale marker) and still
-    returns 0; only "no data at all" and a lock timeout are errors. `layout_choice` defaults
-    to the persisted choice (settings.json, else DISPLAY_LAYOUT)."""
+    """Fetch -> build -> resolve layout -> render -> show, under the panel lock.
+
+    What goes on the panel when the fetch fails: a 401/403 means the key is rejected and the
+    "rejected" screen is shown right away (exit 1) - a cached dashboard would only hide the
+    problem. Any other failure falls back to the cached snapshot with the stale marker
+    (exit 0) until the cache is older than DISPLAY_STALE_ERROR_HOURS, from when on the
+    "stale" screen is shown instead (still exit 0, the outage may end). With no cache at all
+    the "no data" screen is shown and the exit code is 1. A lock timeout draws nothing and
+    exits 1. The outcome is recorded in status.json for the web interface and /healthz.
+    `layout_choice` defaults to the persisted choice (settings.json, else DISPLAY_LAYOUT);
+    `clear_first` does the daily full clear before the frame."""
     tz = zone(settings.studylife_timezone)
     now = datetime.now(tz)
     state_path = Path(settings.display_state_path)
+    state_dir = state_path.parent
+    language = settings.display_language
 
     snapshot: Snapshot | None
     try:
         with _client(settings) as client:
             snapshot = fetch_snapshot(client, now)
     except (StudyLifeApiError, httpx.HTTPError) as exc:
+        status = exc.status_code if isinstance(exc, StudyLifeApiError) else None
+        message = str(exc)
+        if status in REJECTED_STATUSES:
+            log.error("StudyLife rejected the API key (%s) - showing the error screen", exc)
+            _record(
+                state_dir,
+                tz,
+                last_fetch_ok=False,
+                last_error=LastError(REJECTED, status, message, now),
+            )
+            _show_error(
+                settings,
+                state_dir,
+                tz,
+                now,
+                REJECTED,
+                f"HTTP {status}",
+                message,
+                output_override,
+                clear_first,
+            )
+            return 1
         log.warning("fetch failed (%s), falling back to the cached snapshot", exc)
         snapshot = load_snapshot(state_path, tz)
         if snapshot is None:
-            log.error("no cached snapshot at %s - nothing to show", state_path)
+            log.error("no cached snapshot at %s - showing the error screen", state_path)
+            _record(
+                state_dir,
+                tz,
+                last_fetch_ok=False,
+                last_error=LastError(NO_DATA, status, message, now),
+            )
+            _show_error(
+                settings,
+                state_dir,
+                tz,
+                now,
+                NO_DATA,
+                message,
+                message,
+                output_override,
+                clear_first,
+            )
             return 1
+        age_minutes = int((now.timestamp() - snapshot.fetched_at.timestamp()) // 60)
+        if age_minutes >= settings.display_stale_error_hours * 60:
+            log.error(
+                "cached snapshot is %d min old (limit %.0f h) - showing the stale screen",
+                age_minutes,
+                settings.display_stale_error_hours,
+            )
+            _record(
+                state_dir,
+                tz,
+                last_fetch_ok=False,
+                last_error=LastError(STALE, status, message, now),
+            )
+            shown = _show_error(
+                settings,
+                state_dir,
+                tz,
+                now,
+                STALE,
+                format_age(age_minutes, language),
+                message,
+                output_override,
+                clear_first,
+            )
+            return 0 if shown else 1
+        _record(
+            state_dir,
+            tz,
+            last_fetch_ok=False,
+            last_error=LastError(TRANSIENT, status, message, now),
+        )
     else:
         try:
             save_snapshot(state_path, snapshot)
         except OSError as exc:
             log.warning("could not cache the snapshot at %s: %s", state_path, exc)
+        _record(state_dir, tz, last_fetch_ok=True, last_fetch_at=now, last_error=None)
 
     data = build(snapshot, now, tz)
     choice = layout_choice if layout_choice is not None else load_layout_choice(settings)
     layout = resolve_layout(choice, data)
-    display = make_display(settings, output_override)
-    try:
-        with panel_lock(state_path.parent):
-            show(display, data, settings.display_language, layout)
-    except PanelLockTimeout as exc:
-        log.error("%s - another refresh is stuck, giving up", exc)
+    image = render(data, language, layout)
+    if not _put_on_panel(settings, state_dir, tz, now, image, output_override, clear_first):
         return 1
     log.info(
         "shown %s (%s): today %.2f h, streak %d, stale %d min",
@@ -117,8 +284,25 @@ def refresh_panel(
 
 
 def command_run(settings: Settings, output_override: str | None = None) -> int:
-    """What the systemd timer calls: one refresh with the persisted layout choice."""
-    return refresh_panel(settings, output_override=output_override)
+    """What the systemd timer calls: one refresh with the persisted layout choice - unless
+    quiet hours are on, in which case nothing happens (exit 0). The daily clear is the one
+    exception: when it is due, the refresh runs even inside quiet hours, clearing first."""
+    tz = zone(settings.studylife_timezone)
+    now = datetime.now(tz)
+    state_dir = Path(settings.display_state_path).parent
+    clear_at = parse_clear_at(settings.display_clear_at)
+    due = clear_due(now, load_last_clear(state_dir, tz), clear_at)
+    if in_quiet_hours(now, settings.display_quiet_hours) and not due:
+        end = quiet_hours_end(now, settings.display_quiet_hours)
+        log.info(
+            "quiet hours (%s) until %s - not refreshing",
+            settings.display_quiet_hours,
+            end.strftime("%H:%M") if end is not None else "?",
+        )
+        return 0
+    if due:
+        log.info("daily clear due (DISPLAY_CLEAR_AT=%s), clearing before the frame", clear_at)
+    return refresh_panel(settings, output_override=output_override, clear_first=due)
 
 
 def command_preview(
@@ -148,6 +332,7 @@ def command_check(settings: Settings) -> int:
     data = build(snapshot, now, tz)
     choice = load_layout_choice(settings)
     report = {
+        "version": package_version(),
         "fetched_at": data.fetched_at.isoformat(),
         "today_hours": round(data.today_hours, 2),
         "week_hours": data.week_hours,
@@ -183,6 +368,7 @@ def command_check(settings: Settings) -> int:
         "course_hours": [[name, round(hours, 2)] for name, hours in data.course_hours],
         "layout_choice": choice,
         "layout": resolve_layout(choice, data),
+        "quiet_hours_active": in_quiet_hours(now, settings.display_quiet_hours),
     }
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
@@ -208,6 +394,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Render the StudyLife dashboard onto the Waveshare 7.5 inch e-Paper HAT.",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {package_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("run", help="fetch, render and show once (what the systemd timer calls)")

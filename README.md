@@ -27,6 +27,7 @@ This is the `classic` layout; the others are under [Layouts](#layouts).
 | Programme name and hours per 7 days | `metrics/summary` → `program.name`, `hours.week` |
 | **Timer läuft · Fokus/Pause · endet HH:MM** while a session runs | `GET /api/timerstate` |
 | `aktualisiert HH:MM · vor N min` | Set when the last fetch failed and a cached snapshot is shown |
+| **Schlüssel abgelehnt** / **Daten veraltet** / **Keine Daten** | Full-screen messages instead of the dashboard, see [Error screens](#error-screens) |
 
 The text is German by default; `DISPLAY_LANGUAGE=en` switches every label. Heatmap levels:
 empty = no session, light hatch = under 1 h, dense hatch = under 2.5 h, solid = 2.5 h and more.
@@ -55,6 +56,23 @@ The choice comes from, in order of precedence, `settings.json` next to the cache
 refresh of the panel like every other update. `studylife-display preview --sample --layout
 <key|auto> --out frame.png` renders any of them without a panel or an instance.
 
+## Error screens
+
+A fetch that fails does not always mean "show the old numbers". Three situations get a
+full-screen message instead of the dashboard - a headline, two lines of explanation and the
+last error at the bottom - because a dashboard that looks fine but is not is the worst of
+the options:
+
+| Screen | When | What `run` does |
+| --- | --- | --- |
+| **Schlüssel abgelehnt** / **API key rejected** | StudyLife answered **401 or 403** | Shown right away, even with a cache: a rejected key never heals by waiting. Check `STUDYLIFE_API_KEY` and the key's scopes. Exit 1 |
+| **Daten veraltet** / **Data is stale** | Every other failure, once the cached snapshot is older than `DISPLAY_STALE_ERROR_HOURS` (default 24) | Up to that age the cached dashboard is shown with the `· vor N min` marker as before; past it the screen names the age and the last error. Exit 0, the outage may end |
+| **Keine Daten** / **No data** | No cache at all and the API unreachable (a fresh install with a wrong URL, typically) | Shown, exit 1 |
+
+The last error (kind, HTTP status, message, time) is written to `status.json` in the state
+directory together with the outcome of the last fetch and the time of the last panel
+update; the web interface shows it above the layouts and `/healthz` reports it.
+
 ## Web interface
 
 `studylife-display serve` runs a small page on the Pi (port **8795**, `DISPLAY_WEB_BIND`)
@@ -81,6 +99,39 @@ It is plain HTTP for the LAN; do not port-forward it to the internet.
   the scheduled refresh; the loser waits up to 60 s.
 - Standard library only (`http.server`), inline CSS, no external resources, usable on a phone.
   One log line per request on stderr, never containing the token or the cookie.
+- The footer shows the running version. With `DISPLAY_UPDATE_CHECK=true` it also says when a
+  newer release exists on GitHub: asked at most once per six hours, cached in
+  `update_check.json` in the state directory, a failed check is silent. Off by default,
+  because nothing on the Pi should talk to anything but the StudyLife instance unless you
+  say so.
+- During [quiet hours](#quiet-hours-and-the-daily-clear) the page says "Ruhezeit bis HH:MM";
+  "Übernehmen" and "Jetzt aktualisieren" still work - a click is an explicit request, only
+  the schedule pauses.
+
+### Health endpoint
+
+`GET /healthz` answers without a cookie (the same-origin rules do not apply either; it is
+read-only and carries nothing secret) with JSON for an uptime monitor:
+
+```json
+{"status": "ok", "version": "1.3.0", "last_fetch_at": "2026-09-17T16:45:00+02:00",
+ "last_fetch_ok": true, "stale_minutes": 3, "last_error": null,
+ "last_panel_update_at": "2026-09-17T16:45:04+02:00", "layout": "classic",
+ "quiet_hours_active": false}
+```
+
+| `status` | HTTP | Meaning |
+| --- | --- | --- |
+| `ok` | 200 | The last fetch succeeded and the snapshot is fresh |
+| `degraded` | 200 | The last fetch failed and the cached dashboard (or the stale screen) is shown, or the snapshot is older than 15 minutes outside quiet hours - the timer is not running |
+| `error` | 503 | The key was rejected, or there is no data at all |
+
+`last_error` is `null` or `{"kind": "rejected"|"stale"|"no_data"|"transient", "status": 403,
+"message": "...", "at": "..."}`. For **Uptime Kuma**: monitor type *HTTP(s) - Keyword* or
+*JSON Query*, URL `http://<hostname>:8795/healthz`, expected keyword `"status": "ok"` (or JSON
+query `status` == `ok`); a plain HTTP monitor only catches `error`, since `degraded` is a 200.
+Set the interval to a few minutes; the endpoint reads two small files and never calls
+StudyLife.
 
 ## Hardware
 
@@ -124,7 +175,12 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi):
 | `DISPLAY_LANGUAGE` | `de` | `de` or `en` |
 | `DISPLAY_DRIVER` | `waveshare` | `waveshare` (the panel) or `file` (a PNG) |
 | `DISPLAY_OUTPUT_PATH` | `./frame.png` | Where the `file` driver writes |
-| `DISPLAY_STATE_PATH` | `/var/lib/studylife-display/last.json` | Cached last snapshot; `settings.json` and `panel.lock` live in the same directory |
+| `DISPLAY_ROTATE` | `0` | `180` when the panel is mounted upside down; applied by the driver, anything but 0/180 is refused |
+| `DISPLAY_STATE_PATH` | `/var/lib/studylife-display/last.json` | Cached last snapshot; `settings.json`, `status.json`, `last_clear`, `update_check.json` and `panel.lock` live in the same directory |
+| `DISPLAY_STALE_ERROR_HOURS` | `24` | Age of the cached snapshot from which the stale screen replaces the dashboard |
+| `DISPLAY_QUIET_HOURS` | – | `HH-HH` or `HH:MM-HH:MM`, may wrap past midnight (`23-7`); no scheduled refresh inside. Empty = off |
+| `DISPLAY_CLEAR_AT` | `04:00` | Time of the daily full clear against ghosting; empty = off |
+| `DISPLAY_UPDATE_CHECK` | `false` | Let the web interface ask GitHub (once per 6 h) whether a newer release exists |
 | `DISPLAY_LAYOUT` | `auto` | `auto`, `classic`, `focus`, `exam` or `week`; overridden by the choice made in the web interface |
 | `DISPLAY_PERSIST_PATH` | `/boot/firmware/studylife-display/settings.json` | Copy of the web interface's choice on the boot partition, restored at boot (see [SD-card protection](#sd-card-protection)); empty disables it |
 | `DISPLAY_WEB_BIND` | `0.0.0.0:8795` | Where `serve` listens |
@@ -148,13 +204,15 @@ that zone, and a session from 23:30 to 00:30 counts half an hour on each of the 
    sudo bash studylife-display/deploy/install.sh
    ```
 
-   It installs the system packages Pillow needs, enables SPI, creates a virtualenv in
-   `/opt/studylife-display`, installs this package with the `pi` extra (the Waveshare
-   library straight from its git repository plus `spidev`, `gpiozero`, `lgpio`), writes a
-   template `/etc/studylife-display.env`, asks for the web interface's access token
-   (Enter accepts the suggested random one), and enables the systemd timer, the web
-   service and the two root-only units that carry the layout choice across reboots.
-   Re-running it updates the code and never overwrites an existing env file.
+   It installs the system packages Pillow needs, enables SPI, checks out the **latest
+   release tag** under `/opt/studylife-display/src` (`--main` tracks `main` instead, for
+   developers), creates a virtualenv in `/opt/studylife-display`, installs this package
+   with the `pi` extra (the Waveshare library straight from its git repository plus
+   `spidev`, `gpiozero`, `lgpio`), writes a template `/etc/studylife-display.env`, asks
+   for the web interface's access token (Enter accepts the suggested random one), and
+   enables the systemd timer, the web service and the two root-only units that carry the
+   layout choice across reboots. Re-running it updates the code and never overwrites an
+   existing env file; for updates see [Updating](#updating).
 3. Put the URL and the key into `/etc/studylife-display.env`, then:
 
    ```bash
@@ -206,6 +264,50 @@ still mount the boot partition there, and disables the mirror (`DISPLAY_PERSIST_
 neither is a separate mount. The file is tiny and changes only when you switch layouts, so
 the extra writes to the boot partition are not what SD-card protection is about.
 
+### Updating
+
+```bash
+sudo bash /opt/studylife-display/src/deploy/update.sh --check   # installed vs latest release, exit 1 when behind
+sudo bash /opt/studylife-display/src/deploy/update.sh           # update to the latest release
+sudo bash /opt/studylife-display/src/deploy/update.sh --tag v1.3.0
+```
+
+The script asks GitHub for the latest release (no token needed), fetches the tags, checks
+the tag out under `/opt/studylife-display/src`, reinstalls the package into the virtualenv,
+re-installs the unit files from `deploy/` (so a unit added by the release lands), reloads
+systemd, restarts the web service and runs one refresh. Running it on the tag that is
+already installed does nothing but say so; `--force` reinstalls anyway. The version the
+web footer and `/healthz` report is the tag the checkout sits on.
+
+**With the overlay filesystem on, the update would be lost at the next reboot**: `/opt` and
+`/etc` are RAM-backed then. The script detects it (`raspi-config nonint get_overlay_now`, or
+an `overlay` root mount in `/proc/mounts`) and refuses; the three steps are
+
+```bash
+sudo raspi-config nonint disable_overlayfs && sudo reboot
+sudo bash /opt/studylife-display/src/deploy/update.sh
+sudo raspi-config nonint enable_overlayfs && sudo reboot
+```
+
+`--force` runs it anyway, for a test that may be gone tomorrow. `--check` is fine with the
+overlay on (it changes nothing), so a cron line or the web footer's update hint
+(`DISPLAY_UPDATE_CHECK=true`) can tell you when the three steps are worth it.
+
+### Quiet hours and the daily clear
+
+`DISPLAY_QUIET_HOURS=23-7` (or `22:30-06:15`; the window may wrap past midnight, the start
+is inclusive and the end exclusive) makes the scheduled `run` exit 0 without fetching or
+drawing - one log line, no flicker in a dark room, no API calls at night. The web
+interface's buttons still work inside the window, and its page says "Ruhezeit bis 07:00".
+
+E-paper keeps faint traces of earlier frames. `DISPLAY_CLEAR_AT=04:00` (default; empty
+turns it off) makes the first scheduled `run` at or after that time do a full clear to
+white before drawing the frame, once per day (`last_clear` in the state directory
+remembers it; a slot missed while the Pi was off is caught up on the next run). The daily
+clear runs **inside quiet hours too** - it is the one refresh that matters - and only from
+the timer, never from a click in the web interface. With the `file` driver the clear writes
+`frame-clear.png` next to the output.
+
 ### Refresh cadence, and why full refresh only
 
 The timer fires every five minutes (`OnUnitActiveSec=5min`, first run one minute after boot)
@@ -218,7 +320,8 @@ non-event. Updating only the timer line with a partial refresh between full ones
 possible follow-up; it is deliberately not in this version.
 
 The dashboard is drawn 800 x 480 with the panel in landscape orientation. If yours is mounted
-the other way round, rotate in `driver.py` (`image.rotate(180)`) rather than in the renderer.
+the other way round, set `DISPLAY_ROTATE=180`: the driver turns the finished frame right
+before showing it, the layouts (and their golden frames) stay upright.
 
 ## Troubleshooting
 
@@ -228,8 +331,12 @@ the other way round, rotate in `driver.py` (`image.rotate(180)`) rather than in 
 | `FileNotFoundError: /dev/spidev0.0` | SPI is off: `sudo raspi-config nonint do_spi 0` and reboot |
 | `Permission denied: /dev/spidev0.0` or GPIO errors | The `pi` user is not in `spi`/`gpio`: `sudo usermod -aG spi,gpio pi`, then log in again |
 | Panel stays white, service exits 0 | Driver-board switches (B / 0) and the FPC cable's orientation |
-| Header shows `· vor N min` | The last fetch failed; `journalctl -u studylife-display.service` names the reason (403 = a scope is missing on the key) |
-| Exit code 1 and `no cached snapshot` | The very first fetch failed and there is nothing to fall back to; `studylife-display check` shows the API error |
+| Header shows `· vor N min` | The last fetch failed; `journalctl -u studylife-display.service` names the reason, and so does `/healthz` |
+| Panel says **Schlüssel abgelehnt** / **API key rejected** | StudyLife answered 401/403: the key is wrong or misses a scope (`Metrics.GetSummary`, `Sessions.GetHistory`, `TimerState.Get`); fix `/etc/studylife-display.env` and `sudo systemctl start studylife-display.service` |
+| Panel says **Daten veraltet** / **Data is stale** | No successful fetch for `DISPLAY_STALE_ERROR_HOURS`; the last error is on the screen and in `/healthz` |
+| Panel says **Keine Daten** / **No data** | The very first fetch failed and there is nothing to fall back to; `studylife-display check` shows the API error |
+| The panel does not refresh at night | `DISPLAY_QUIET_HOURS` is set; `journalctl -u studylife-display.service` shows "quiet hours ... not refreshing" |
+| `update.sh` refuses with "overlay filesystem is on" | Expected, see [Updating](#updating): disable the overlay, reboot, update, re-enable, reboot |
 | Session times off by an hour or two | `STUDYLIFE_TIMEZONE` must be the server's zone, not the Pi's |
 | Web interface does not answer | `journalctl -u studylife-display-web.service -n 20`; `DISPLAY_WEB_TOKEN` missing or shorter than 12 characters makes `serve` exit immediately |
 | Refresh from the browser reports "busy" or waits | The timer's refresh holds `panel.lock`; it is over within seconds, a stuck one times out after 60 s |
@@ -258,7 +365,14 @@ change regenerate them with `uv run pytest --update-goldens` and commit the resu
 with the previews in `docs/` (`uv run studylife-display preview --sample --layout <key> --out
 docs/preview-<key>.png` for each of the four; `docs/preview.png` is the classic one).
 Layouts live in `src/studylife_display/layouts/`, one module each, registered in
-`layouts/__init__.py`; the drawing helpers they share are in `layouts/common.py`.
+`layouts/__init__.py`; the drawing helpers they share are in `layouts/common.py`, the error
+screens in `layouts/error.py`. Rotation is applied in `driver.py` only, so the goldens are
+always upright.
+
+The version comes from the git tag the checkout sits on (`hatch-vcs`; `1.2.1.devN+g...`
+between tags, `0.0.0` without git metadata), which is what `studylife-display --version`,
+the web footer and `/healthz` report. The `version` line `uv sync` rewrites in `uv.lock`
+for the root project is noise from that and need not be committed.
 
 `tests/test_wire_fields.py` pins every JSON field name the code reads to the verified
 StudyLife wire format. StudyLife never errors on an unknown field, so this test is what

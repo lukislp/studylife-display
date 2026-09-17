@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -7,7 +8,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 import respx
-from PIL import Image
+from PIL import Image, ImageChops
 
 from studylife_display import main as main_module
 from studylife_display.main import Snapshot, load_snapshot, main, save_snapshot
@@ -40,6 +41,20 @@ def rendered(monkeypatch: pytest.MonkeyPatch) -> list[DashboardData]:
         return real_render(data, language, layout)
 
     monkeypatch.setattr(main_module, "render", spy)
+    return seen
+
+
+@pytest.fixture
+def error_screens(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """Captures (kind, detail) of every error screen drawn, without stubbing the drawing."""
+    seen: list[tuple[str, str]] = []
+    real_render_error = main_module.render_error
+
+    def spy(kind: str, detail: str, language: str, *args: Any, **kwargs: Any) -> Image.Image:
+        seen.append((kind, detail))
+        return real_render_error(kind, detail, language, *args, **kwargs)
+
+    monkeypatch.setattr(main_module, "render_error", spy)
     return seen
 
 
@@ -88,24 +103,99 @@ def test_run_falls_back_to_the_cache_with_a_stale_marker(
 
 
 @respx.mock
-def test_run_treats_a_403_like_an_outage(
-    env: dict[str, Path], sample: Any, rendered: list[DashboardData], tz: ZoneInfo
+@pytest.mark.parametrize("status", [401, 403])
+def test_run_shows_the_rejected_screen_on_401_and_403_even_with_a_cache(
+    env: dict[str, Path],
+    sample: Any,
+    rendered: list[DashboardData],
+    error_screens: list[tuple[str, str]],
+    tz: ZoneInfo,
+    status: int,
 ) -> None:
     metrics, history, timer = sample
     save_snapshot(env["state"], Snapshot(metrics, history, timer, datetime.now(tz)))
     respx.get(f"{BASE_URL}/api/metrics/summary").mock(
-        return_value=httpx.Response(403, text="no scope")
+        return_value=httpx.Response(status, text="no scope")
     )
-    assert main(["run"]) == 0
-    assert len(rendered) == 1
+    assert main(["run"]) == 1
+    assert rendered == []
+    assert error_screens == [("rejected", f"HTTP {status}")]
+    assert env["frame"].exists()
+    recorded = json.loads((env["state"].parent / "status.json").read_text(encoding="utf-8"))
+    assert recorded["last_fetch_ok"] is False
+    assert recorded["last_error"]["kind"] == "rejected"
+    assert recorded["last_error"]["status"] == status
+    assert "no scope" in recorded["last_error"]["message"]
+    assert recorded["last_panel_update_at"] is not None
 
 
 @respx.mock
-def test_run_without_any_cache_fails(env: dict[str, Path], rendered: list[DashboardData]) -> None:
+def test_run_without_any_cache_shows_no_data_and_fails(
+    env: dict[str, Path], rendered: list[DashboardData], error_screens: list[tuple[str, str]]
+) -> None:
     respx.get(f"{BASE_URL}/api/metrics/summary").mock(side_effect=httpx.ConnectError("down"))
     assert main(["run"]) == 1
-    assert not env["frame"].exists()
+    assert env["frame"].exists()
     assert rendered == []
+    assert [kind for kind, _ in error_screens] == ["no_data"]
+    recorded = json.loads((env["state"].parent / "status.json").read_text(encoding="utf-8"))
+    assert recorded["last_error"]["kind"] == "no_data"
+    assert recorded["last_error"]["status"] is None
+
+
+@respx.mock
+def test_run_shows_the_stale_screen_once_the_cache_is_too_old(
+    env: dict[str, Path],
+    sample: Any,
+    rendered: list[DashboardData],
+    error_screens: list[tuple[str, str]],
+    tz: ZoneInfo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics, history, timer = sample
+    monkeypatch.setenv("DISPLAY_STALE_ERROR_HOURS", "2")
+    respx.get(f"{BASE_URL}/api/metrics/summary").mock(side_effect=httpx.ConnectError("down"))
+
+    # Just under the limit: the cached dashboard with the stale marker, as before.
+    save_snapshot(
+        env["state"], Snapshot(metrics, history, timer, datetime.now(tz) - timedelta(minutes=110))
+    )
+    assert main(["run"]) == 0
+    assert len(rendered) == 1
+    assert rendered[0].stale_minutes >= 110
+    assert error_screens == []
+    recorded = json.loads((env["state"].parent / "status.json").read_text(encoding="utf-8"))
+    assert recorded["last_error"]["kind"] == "transient"
+
+    # Past the limit: the stale screen, still exit 0 (the outage may end).
+    save_snapshot(
+        env["state"], Snapshot(metrics, history, timer, datetime.now(tz) - timedelta(hours=2))
+    )
+    assert main(["run"]) == 0
+    assert len(rendered) == 1
+    assert error_screens == [("stale", "2 h")]
+    recorded = json.loads((env["state"].parent / "status.json").read_text(encoding="utf-8"))
+    assert recorded["last_error"]["kind"] == "stale"
+
+
+@respx.mock
+def test_a_successful_fetch_clears_the_last_error(
+    env: dict[str, Path], sample: Any, rendered: list[DashboardData]
+) -> None:
+    respx.get(f"{BASE_URL}/api/metrics/summary").mock(side_effect=httpx.ConnectError("down"))
+    assert main(["run"]) == 1
+    respx.get(f"{BASE_URL}/api/metrics/summary").mock(
+        return_value=httpx.Response(200, json=sample[0])
+    )
+    respx.get(f"{BASE_URL}/api/sessions/history").mock(
+        return_value=httpx.Response(200, json=sample[1])
+    )
+    respx.get(f"{BASE_URL}/api/timerstate").mock(return_value=httpx.Response(200, json=sample[2]))
+    assert main(["run"]) == 0
+    recorded = json.loads((env["state"].parent / "status.json").read_text(encoding="utf-8"))
+    assert recorded["last_fetch_ok"] is True
+    assert recorded["last_error"] is None
+    assert recorded["last_fetch_at"] is not None
 
 
 @respx.mock
@@ -162,3 +252,122 @@ def test_load_snapshot_tolerates_garbage(tmp_path: Path, tz: ZoneInfo) -> None:
     assert load_snapshot(path, tz) is None
     path.write_text('{"metrics": {}}', encoding="utf-8")
     assert load_snapshot(path, tz) is None
+
+
+def quiet_hours_around(now: datetime) -> str:
+    return f"{(now.hour - 1) % 24}-{(now.hour + 2) % 24}"
+
+
+def clear_file(env: dict[str, Path]) -> Path:
+    return env["frame"].with_name("frame-clear.png")
+
+
+class TestQuietHours:
+    def test_run_does_nothing_inside_quiet_hours(
+        self,
+        env: dict[str, Path],
+        monkeypatch: pytest.MonkeyPatch,
+        tz: ZoneInfo,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setenv("DISPLAY_QUIET_HOURS", quiet_hours_around(datetime.now(tz)))
+        monkeypatch.setenv("DISPLAY_CLEAR_AT", "")
+        caplog.set_level(logging.INFO, logger="studylife_display")
+        with respx.mock(assert_all_called=False) as router:
+            assert main(["run"]) == 0
+            assert not router.calls
+        assert not env["frame"].exists()
+        assert "quiet hours" in caplog.text
+
+    @respx.mock
+    def test_run_refreshes_outside_quiet_hours(
+        self, env: dict[str, Path], sample: Any, monkeypatch: pytest.MonkeyPatch, tz: ZoneInfo
+    ) -> None:
+        now = datetime.now(tz)
+        # A window that ended an hour ago (or starts in two hours), never containing now.
+        monkeypatch.setenv("DISPLAY_QUIET_HOURS", f"{(now.hour + 2) % 24}-{(now.hour - 1) % 24}")
+        mock_api(sample)
+        assert main(["run"]) == 0
+        assert env["frame"].exists()
+
+
+class TestDailyClear:
+    @respx.mock
+    def test_clears_once_per_day_before_the_frame(
+        self, env: dict[str, Path], sample: Any, monkeypatch: pytest.MonkeyPatch, tz: ZoneInfo
+    ) -> None:
+        monkeypatch.setenv("DISPLAY_CLEAR_AT", "00:00")
+        mock_api(sample)
+        assert main(["run"]) == 0
+        assert clear_file(env).exists()
+        assert env["frame"].exists()
+        last_clear = env["state"].parent / "last_clear"
+        recorded = datetime.fromisoformat(last_clear.read_text(encoding="utf-8"))
+        assert abs((datetime.now(tz) - recorded).total_seconds()) < 60
+
+        clear_file(env).unlink()
+        assert main(["run"]) == 0
+        assert not clear_file(env).exists()  # today's clear is done
+
+        # Yesterday's clear makes today's due again.
+        last_clear.write_text((datetime.now(tz) - timedelta(days=1)).isoformat(), encoding="utf-8")
+        assert main(["run"]) == 0
+        assert clear_file(env).exists()
+
+    @respx.mock
+    def test_clear_off(
+        self, env: dict[str, Path], sample: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DISPLAY_CLEAR_AT", "")
+        mock_api(sample)
+        assert main(["run"]) == 0
+        assert not clear_file(env).exists()
+        assert not (env["state"].parent / "last_clear").exists()
+
+    @respx.mock
+    def test_clear_runs_inside_quiet_hours(
+        self, env: dict[str, Path], sample: Any, monkeypatch: pytest.MonkeyPatch, tz: ZoneInfo
+    ) -> None:
+        monkeypatch.setenv("DISPLAY_QUIET_HOURS", quiet_hours_around(datetime.now(tz)))
+        monkeypatch.setenv("DISPLAY_CLEAR_AT", "00:00")
+        mock_api(sample)
+        assert main(["run"]) == 0
+        assert clear_file(env).exists()
+        assert env["frame"].exists()
+        # The next run inside quiet hours is skipped again: the clear is done for today.
+        env["frame"].unlink()
+        assert main(["run"]) == 0
+        assert not env["frame"].exists()
+
+    @respx.mock
+    def test_the_web_refresh_never_clears(
+        self, env: dict[str, Path], sample: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DISPLAY_CLEAR_AT", "00:00")
+        mock_api(sample)
+        assert main_module.refresh_panel(main_module.Settings()) == 0  # type: ignore[call-arg]
+        assert env["frame"].exists()
+        assert not clear_file(env).exists()
+
+
+@respx.mock
+def test_run_applies_the_configured_rotation(
+    env: dict[str, Path],
+    sample: Any,
+    rendered: list[DashboardData],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DISPLAY_ROTATE", "180")
+    monkeypatch.setenv("DISPLAY_CLEAR_AT", "")
+    monkeypatch.setenv("DISPLAY_LAYOUT", "classic")
+    mock_api(sample)
+    assert main(["run"]) == 0
+    # The layouts drew upright (the spy saw the data they were handed); the file holds the
+    # same frame turned by 180 degrees, i.e. flipped both ways.
+    upright = main_module.render(rendered[0], "de", "classic")
+    expected = upright.transpose(Image.Transpose.FLIP_LEFT_RIGHT).transpose(
+        Image.Transpose.FLIP_TOP_BOTTOM
+    )
+    with Image.open(env["frame"]) as frame:
+        assert ImageChops.difference(frame.convert("1"), expected).getbbox() is None
+        assert ImageChops.difference(frame.convert("1"), upright).getbbox() is not None
