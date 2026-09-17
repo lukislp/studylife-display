@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/lukislp/studylife-display/compare/v1.0.1...v1.1.0) (2026-09-17)
+
+
+### Features
+
+* four layouts, auto mode and a web interface to switch them ([#6](https://github.com/lukislp/studylife-display/issues/6)) ([45c9e66](https://github.com/lukislp/studylife-display/commit/45c9e66688acb1907ba54e0a3d0afbcfba6086e9))
+
 ## [1.0.1](https://github.com/lukislp/studylife-display/compare/v1.0.0...v1.0.1) (2026-09-17)
 
 
