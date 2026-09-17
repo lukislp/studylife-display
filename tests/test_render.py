@@ -23,7 +23,10 @@ from studylife_display.render import (
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 # Fraction of pixels allowed to differ (FreeType hinting differences between builds).
-GOLDEN_TOLERANCE = 0.005
+# FreeType rasterises the vendored fonts slightly differently per platform/version (the goldens
+# were written on Windows, CI runs Ubuntu: ~1.3% of pixels differ along glyph edges). A layout
+# regression moves whole blocks and lands far above this; anti-aliasing noise stays well below.
+GOLDEN_TOLERANCE = 0.03
 
 
 @pytest.fixture
