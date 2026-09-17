@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/lukislp/studylife-display/compare/v1.1.0...v1.2.0) (2026-09-17)
+
+
+### Features
+
+* keep the web layout choice across reboots via the boot partition ([#7](https://github.com/lukislp/studylife-display/issues/7)) ([e13e33b](https://github.com/lukislp/studylife-display/commit/e13e33bb87f98b03bebe563f15565408e5901d76))
+
 # [1.1.0](https://github.com/lukislp/studylife-display/compare/v1.0.1...v1.1.0) (2026-09-17)
 
 
