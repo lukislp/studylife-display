@@ -1,0 +1,31 @@
+[Unit]
+Description=StudyLife e-paper dashboard (one refresh)
+Documentation=https://github.com/lukislp/studylife-display
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+SupplementalGroups=spi gpio
+EnvironmentFile=/etc/studylife-display.env
+ExecStart=/opt/studylife-display/venv/bin/studylife-display run
+# A single refresh takes a few seconds of API calls plus ~5 s of panel refresh; anything
+# longer than a minute is a hung SPI transfer, not a slow network.
+TimeoutStartSec=90
+
+# Hardening: the process only needs to read its venv, talk to the network and the SPI/GPIO
+# device nodes, and write the cached snapshot.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/studylife-display
+PrivateTmp=yes
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

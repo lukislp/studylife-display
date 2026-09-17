@@ -1,0 +1,16 @@
+# Weekly Dependabot updates: GitHub Actions and uv (pyproject + uv.lock). No Docker ecosystem -
+# this add-on runs from a venv on a Raspberry Pi, not from an image.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "fix(ci)"
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "fix(deps)"

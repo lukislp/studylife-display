@@ -1,0 +1,14 @@
+[Unit]
+Description=Refresh the StudyLife e-paper dashboard every 5 minutes
+
+[Timer]
+# First refresh a minute after boot (network-online has usually settled by then), then every
+# five minutes measured from the previous start. Persistent=true catches up a missed run
+# right after a boot or a resume instead of waiting for the next slot.
+OnBootSec=1min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=studylife-display.service
+
+[Install]
+WantedBy=timers.target

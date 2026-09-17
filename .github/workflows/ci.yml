@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Least-privilege default for GITHUB_TOKEN (CodeQL actions/missing-workflow-permissions):
+# jobs that need more declare it themselves.
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.5.8"
+          cache-suffix: "lint"
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+
+  test:
+    # The `pi` extra (Waveshare driver, spidev, lgpio) is deliberately NOT installed here:
+    # it only builds on a Raspberry Pi. `uv sync` without `--all-extras` leaves it out and the
+    # driver module imports it lazily, so the whole suite runs on a plain Ubuntu runner.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.5.8"
+          cache-suffix: "test"
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - run: uv run pytest
+
+  # ---------------------------------------------------------------------
+  # Version / release - push to main only, same pattern as the other StudyLife add-ons:
+  # semantic-release drives the version from the commit messages. There is no image and no
+  # cluster deployment: this add-on is installed from a git checkout on the Pi
+  # (deploy/install.sh), so the docker/trivy/deploy-bump jobs of the sibling repos are absent.
+  # ---------------------------------------------------------------------
+  get-version:
+    needs: [lint, test]
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    outputs:
+      next_version: ${{ steps.semrel.outputs.new_release_version }}
+      published: ${{ steps.semrel.outputs.new_release_published }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # Ruleset bypass for the release commit (2026-09-11 main-protection rollout): main is
+      # protected by a ruleset (pull request + green test stage) that the GitHub Actions app
+      # cannot be a bypass actor for on a personal repository, so semantic-release pushes over
+      # SSH as a write-enabled DEPLOY KEY instead, which can. No-op while the secret is unset -
+      # the push then goes through the GITHUB_TOKEN https remote exactly as before. Needed in
+      # get-version too: @semantic-release/git's verifyConditions runs `git push --dry-run`
+      # even in dry-run mode. Same mechanism as lukislp/studylife's ci-cd.yml.
+      - name: Push as the semantic-release deploy key (if configured)
+        uses: lukislp/ci-workflows/.github/actions/deploy-key-push@d44f7d506a81c2b2ae01ccecc755611df2516142 # v1.5.1
+        with:
+          deploy-key: ${{ secrets.SEMANTIC_RELEASE_DEPLOY_KEY }}
+      - name: Sync to the current tip of main
+        run: |
+          git fetch origin main
+          git checkout -B main origin/main
+      - id: semrel
+        uses: lukislp/ci-workflows/.github/actions/semantic-release@d44f7d506a81c2b2ae01ccecc755611df2516142 # v1.5.1
+        with:
+          dry-run: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: No release needed for this push
+        if: steps.semrel.outputs.new_release_published != 'true'
+        run: |
+          echo "No releasable commits since the last tag - semantic-release below skips itself via needs.get-version.outputs.published." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  semantic-release:
+    needs: [get-version]
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.get-version.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # Ruleset bypass for the release commit (2026-09-11 main-protection rollout): main is
+      # protected by a ruleset (pull request + green test stage) that the GitHub Actions app
+      # cannot be a bypass actor for on a personal repository, so semantic-release pushes over
+      # SSH as a write-enabled DEPLOY KEY instead, which can. No-op while the secret is unset -
+      # the push then goes through the GITHUB_TOKEN https remote exactly as before. Needed in
+      # get-version too: @semantic-release/git's verifyConditions runs `git push --dry-run`
+      # even in dry-run mode. Same mechanism as lukislp/studylife's ci-cd.yml.
+      - name: Push as the semantic-release deploy key (if configured)
+        uses: lukislp/ci-workflows/.github/actions/deploy-key-push@d44f7d506a81c2b2ae01ccecc755611df2516142 # v1.5.1
+        with:
+          deploy-key: ${{ secrets.SEMANTIC_RELEASE_DEPLOY_KEY }}
+      - id: semrel
+        uses: lukislp/ci-workflows/.github/actions/semantic-release@d44f7d506a81c2b2ae01ccecc755611df2516142 # v1.5.1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+      - if: steps.semrel.outcome == 'failure'
+        name: "Diagnose before retrying (expected: an out-of-band push landed since checkout)"
+        run: |
+          git fetch origin main
+          BEFORE_SHA="$(git rev-parse HEAD)"
+          AFTER_SHA="$(git rev-parse origin/main)"
+          if [ "$BEFORE_SHA" != "$AFTER_SHA" ]; then
+            echo "origin/main moved since checkout ($BEFORE_SHA -> $AFTER_SHA) - this matches the out-of-band-push race this retry is designed for."
+          else
+            echo "::warning::origin/main did NOT move since checkout - this failure is likely NOT the expected out-of-band-push race. Retrying anyway, but check the semantic-release log above for the real cause before assuming this is just a race."
+          fi
+          git checkout -B main origin/main
+      - if: steps.semrel.outcome == 'failure'
+        uses: lukislp/ci-workflows/.github/actions/semantic-release@d44f7d506a81c2b2ae01ccecc755611df2516142 # v1.5.1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,63 @@
+[project]
+name = "studylife-display"
+version = "0.0.0"
+description = "E-paper study dashboard for StudyLife on a Raspberry Pi with the Waveshare 7.5 inch HAT V2."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "AGPL-3.0-or-later"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "pillow>=11.0",
+    # zoneinfo needs a tz database; Linux has /usr/share/zoneinfo, Windows does not.
+    "tzdata>=2024.1; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+# Only on the Pi: the Waveshare driver and its GPIO/SPI bindings. Not part of `uv sync`
+# (CI runs on Ubuntu), deploy/install.sh installs it with `pip install '.[pi]'`.
+pi = [
+    "waveshare-epd @ git+https://github.com/waveshareteam/e-Paper.git#subdirectory=RaspberryPi_JetsonNano/python",
+    "spidev>=3.6",
+    "gpiozero>=2.0",
+    "lgpio>=0.2",
+]
+
+[project.scripts]
+studylife-display = "studylife_display.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "respx>=0.22",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# The `pi` extra is a git direct reference (the Waveshare library is not on PyPI).
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/studylife_display"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
