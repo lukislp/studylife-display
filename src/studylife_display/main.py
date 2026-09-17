@@ -1,5 +1,6 @@
 """Command line entry point: `studylife-display run|preview|check|serve`, plus the
-`persist-export|persist-import` pair the root-only systemd units call."""
+`persist-export|persist-import|credentials-apply` commands the root-only systemd units
+call."""
 
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from PIL import Image
 
 from studylife_display import package_version
 from studylife_display.config import Settings
+from studylife_display.credentials import ENV_FILE, apply_pending_credentials
 from studylife_display.daily_clear import (
     clear_due,
     load_last_clear,
@@ -31,6 +33,7 @@ from studylife_display.quiet_hours import in_quiet_hours, quiet_hours_end
 from studylife_display.render import render
 from studylife_display.sample import sample_payloads
 from studylife_display.settings_store import (
+    effective_settings,
     export_layout_choice,
     import_layout_choice,
     load_layout_choice,
@@ -363,6 +366,20 @@ def command_check(settings: Settings) -> int:
             "current_round": data.timer.current_round,
         },
         "program_name": data.program_name,
+        "ects": {"earned": data.ects.earned, "total": data.ects.total},
+        "average_grade": data.average_grade,
+        "forecast": {
+            "available": data.forecast.available,
+            "already_done": data.forecast.already_done,
+            "date": data.forecast.date.isoformat() if data.forecast.date else None,
+        },
+        "neglected_course": None
+        if data.neglected_course is None
+        else {
+            "course_name": data.neglected_course.course_name,
+            "days_since": data.neglected_course.days_since,
+        },
+        "topics": {"completed": data.topics.completed, "total": data.topics.total},
         "history_sessions": len(snapshot.history),
         "heatmap": [[round(h, 2) for h in row] for row in data.heatmap],
         "course_hours": [[name, round(hours, 2)] for name, hours in data.course_hours],
@@ -376,7 +393,10 @@ def command_check(settings: Settings) -> int:
 
 def command_serve(settings: Settings) -> int:
     """The web interface. Refuses to bind without a proper access token: the person
-    installing chooses it (deploy/install.sh suggests one), the code never defaults it."""
+    installing chooses it (deploy/install.sh suggests one), the code never defaults it.
+    `settings` are the environment values; the pages and the refresh they trigger read
+    settings.json on top of them at request time, so a change made on the settings page
+    applies without a restart."""
     if len(settings.display_web_token) < MIN_TOKEN_LENGTH:
         log.error(
             "DISPLAY_WEB_TOKEN is %s; set one with at least %d characters in the environment "
@@ -385,7 +405,13 @@ def command_serve(settings: Settings) -> int:
             MIN_TOKEN_LENGTH,
         )
         return 2
-    return serve_web(settings, lambda: refresh_panel(settings))
+    return serve_web(settings, lambda: refresh_panel(effective_settings(settings)))
+
+
+def command_credentials_apply(settings: Settings, env_file: str) -> int:
+    """What the root-only credentials unit calls: move the key the web interface obtained
+    into the environment file (see `credentials.py`)."""
+    return apply_pending_credentials(settings, Path(env_file))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -422,6 +448,13 @@ def build_parser() -> argparse.ArgumentParser:
         "persist-import",
         help="restore settings.json from DISPLAY_PERSIST_PATH; run once at boot",
     )
+    apply = sub.add_parser(
+        "credentials-apply",
+        help="move credentials.pending.json into the environment file; systemd path unit (root)",
+    )
+    apply.add_argument(
+        "--env-file", default=ENV_FILE, help=f"environment file to rewrite (default: {ENV_FILE})"
+    )
     return parser
 
 
@@ -442,16 +475,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     use_sample = args.command == "preview" and args.sample
     settings = _settings(use_sample)
-    if args.command == "run":
-        return command_run(settings)
-    if args.command == "preview":
-        return command_preview(settings, args.out, use_sample, args.layout)
-    if args.command == "serve":
-        return command_serve(settings)
     if args.command == "persist-export":
         return export_layout_choice(settings)
     if args.command == "persist-import":
         return import_layout_choice(settings)
+    if args.command == "credentials-apply":
+        return command_credentials_apply(settings, args.env_file)
+    if args.command == "serve":
+        return command_serve(settings)
+    # Everything that renders reads the web interface's choices on top of the environment.
+    settings = effective_settings(settings)
+    if args.command == "run":
+        return command_run(settings)
+    if args.command == "preview":
+        return command_preview(settings, args.out, use_sample, args.layout)
     return command_check(settings)
 
 

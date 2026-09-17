@@ -5,25 +5,33 @@ Pi with the network down would."""
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import http.client
 import io
 import json
+import re
 import threading
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
+import httpx
 import pytest
-from PIL import Image
+import respx
+from PIL import Image, ImageChops
 
 from studylife_display import main as main_module
 from studylife_display import package_version
 from studylife_display import web as web_module
 from studylife_display.config import Settings
 from studylife_display.main import main
+from studylife_display.model import DashboardData
+from studylife_display.settings_store import effective_settings
 from studylife_display.snapshot import Snapshot, save_snapshot
 from studylife_display.status_store import LastError, Status, save_status
 from studylife_display.studylife_client import StudyLifeApiError
@@ -188,7 +196,7 @@ class TestPreviews:
         status, _, _ = client.request("GET", "/preview/exam.png")
         assert status == 403
 
-    @pytest.mark.parametrize("key", ["auto", "classic", "focus", "exam", "week"])
+    @pytest.mark.parametrize("key", ["auto", "classic", "focus", "exam", "week", "semester"])
     def test_preview_is_an_800x480_png(self, client: Client, key: str) -> None:
         client.login()
         status, headers, body = client.request("GET", f"/preview/{key}.png")
@@ -513,3 +521,334 @@ class TestQuietHoursPage:
     def test_healthz_reports_quiet_hours(self, client: Client) -> None:
         _, _, body = client.request("GET", "/healthz")
         assert json.loads(body)["quiet_hours_active"] is True
+
+
+# --- connecting the account ---------------------------------------------------------------
+
+
+def connect_url_from(body: bytes) -> str:
+    match = re.search(r"href='(https://studylife\.test/connect/client/[^']+)'", body.decode())
+    assert match is not None, "no connect link on the page"
+    return match.group(1).replace("&amp;", "&")
+
+
+class TestConnectPage:
+    def test_requires_the_cookie(self, client: Client) -> None:
+        assert client.request("GET", "/connect")[0] == 403
+        assert client.request("POST", "/connect/start", {}, headers=client.same_origin())[0] == 403
+
+    def test_shows_the_identity_behind_the_stored_key(self, client: Client) -> None:
+        client.login()
+        with respx.mock(assert_all_called=True) as router:
+            router.get(f"{BASE_URL}/api/auth/whoami").mock(
+                return_value=httpx.Response(
+                    200, json={"userId": 7, "credential": "client:studylife-display"}
+                )
+            )
+            _, _, body = client.request("GET", "/connect")
+        assert b"Benutzer-ID 7" in body
+        assert b"client:studylife-display" in body
+        assert b"Verbindung starten" in body
+        assert b"http://localhost:8795/connect/callback" in body
+
+    def test_says_when_the_key_is_rejected_or_missing(
+        self, client: Client, tmp_path: Path, offline: None
+    ) -> None:
+        client.login()
+        with respx.mock() as router:
+            router.get(f"{BASE_URL}/api/auth/whoami").mock(return_value=httpx.Response(403))
+            _, _, body = client.request("GET", "/connect")
+        assert b"lehnt den hinterlegten Schl" in body
+        no_key = make_settings(tmp_path / "nokey", studylife_api_key="")
+        page = web_module.WebApp(no_key, lambda: 0).connect_page()
+        assert b"Noch kein Schl" in page
+
+    def test_start_builds_the_exact_connect_url(
+        self, client: Client, server: DisplayServer
+    ) -> None:
+        client.login()
+        status, headers, _ = client.request(
+            "POST", "/connect/start", {}, headers=client.same_origin()
+        )
+        assert status == 303
+        assert headers["location"] == "/connect?m=started"
+        with respx.mock() as router:
+            router.get(f"{BASE_URL}/api/auth/whoami").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            _, _, body = client.request("GET", "/connect")
+        url = connect_url_from(body)
+        parts = urlsplit(url)
+        assert parts.path == "/connect/client/studylife-display"
+        query = parse_qs(parts.query)
+        assert set(query) == {"redirect_uri", "state", "code_challenge", "code_challenge_method"}
+        assert query["redirect_uri"] == ["http://localhost:8795/connect/callback"]
+        assert query["code_challenge_method"] == ["S256"]
+        pending = server.app.pending()
+        assert pending is not None
+        assert query["state"] == [pending.state]
+        expected = (
+            base64.urlsafe_b64encode(hashlib.sha256(pending.verifier.encode()).digest())
+            .rstrip(b"=")
+            .decode()
+        )
+        assert query["code_challenge"] == [expected]
+        assert pending.verifier not in url
+        assert b"Link g" in body and b"Adresse aus der Adresszeile" in body
+
+    def test_pasted_url_is_exchanged_and_the_key_never_reaches_the_browser(
+        self, client: Client, server: DisplayServer, settings: Settings
+    ) -> None:
+        client.login()
+        client.request("POST", "/connect/start", {}, headers=client.same_origin())
+        pending = server.app.pending()
+        assert pending is not None
+        pasted = f"http://localhost:8795/connect/callback?assertion=A-1&state={pending.state}"
+        with respx.mock(assert_all_called=True) as router:
+            exchange = router.post(f"{BASE_URL}/api/auth/assertion-exchange").mock(
+                return_value=httpx.Response(200, json={"userId": 7, "apiKey": "k-new-123"})
+            )
+            status, headers, body = client.request(
+                "POST", "/connect/paste", {"callback_url": pasted}, headers=client.same_origin()
+            )
+        assert status == 303
+        assert headers["location"] == "/connect?m=applied"
+        assert json.loads(exchange.calls.last.request.content) == {
+            "clientId": "studylife-display",
+            "assertion": "A-1",
+            "codeVerifier": pending.verifier,
+        }
+        pending_file = Path(settings.display_state_path).parent / "credentials.pending.json"
+        assert json.loads(pending_file.read_text(encoding="utf-8"))["apiKey"] == "k-new-123"
+        with respx.mock() as router:
+            router.get(f"{BASE_URL}/api/auth/whoami").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            _, _, body = client.request("GET", "/connect?m=applied")
+        assert "Schlüssel übernommen".encode() in body
+        assert b"k-new-123" not in body
+        assert server.app.pending() is None  # single use
+
+    @pytest.mark.parametrize(
+        ("pasted", "flash"),
+        [
+            ("http://localhost:8795/connect/callback?assertion=A&state=wrong", "state_mismatch"),
+            ("http://localhost:8795/connect/callback?state=STATE", "missing_assertion"),
+        ],
+    )
+    def test_bad_pastes(
+        self, client: Client, server: DisplayServer, settings: Settings, pasted: str, flash: str
+    ) -> None:
+        client.login()
+        client.request("POST", "/connect/start", {}, headers=client.same_origin())
+        pending = server.app.pending()
+        assert pending is not None
+        pasted = pasted.replace("STATE", pending.state)
+        with respx.mock(assert_all_called=False) as router:
+            router.post(f"{BASE_URL}/api/auth/assertion-exchange").mock(
+                return_value=httpx.Response(200, json={"userId": 7, "apiKey": "k"})
+            )
+            _, headers, _ = client.request(
+                "POST", "/connect/paste", {"callback_url": pasted}, headers=client.same_origin()
+            )
+            assert not router.calls
+        assert headers["location"] == f"/connect?m={flash}"
+        assert not (Path(settings.display_state_path).parent / "credentials.pending.json").exists()
+
+    def test_expired_and_absent_attempts(self, client: Client, server: DisplayServer) -> None:
+        client.login()
+        _, headers, _ = client.request(
+            "POST",
+            "/connect/paste",
+            {"callback_url": "assertion=A&state=S"},
+            headers=client.same_origin(),
+        )
+        assert headers["location"] == "/connect?m=no_pending"
+        client.request("POST", "/connect/start", {}, headers=client.same_origin())
+        pending = server.app.pending()
+        assert pending is not None
+        server.app._pending = replace(
+            pending, created_at=pending.created_at - timedelta(minutes=11)
+        )
+        pasted = f"assertion=A&state={pending.state}"
+        _, headers, _ = client.request(
+            "POST", "/connect/paste", {"callback_url": pasted}, headers=client.same_origin()
+        )
+        assert headers["location"] == "/connect?m=expired"
+
+    def test_redirect_mode_callback_needs_no_cookie(
+        self, tmp_path: Path, offline: None, sample: Any
+    ) -> None:
+        settings = make_settings(tmp_path, display_public_base_url="https://pi.tail.ts.net")
+        server = make_server(settings, lambda: 0, "127.0.0.1:0")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            client = Client(server.server_address[1])
+            client.login()
+            client.request("POST", "/connect/start", {}, headers=client.same_origin())
+            with respx.mock() as router:
+                router.get(f"{BASE_URL}/api/auth/whoami").mock(
+                    return_value=httpx.Response(200, json={})
+                )
+                _, _, body = client.request("GET", "/connect")
+            url = connect_url_from(body)
+            query = parse_qs(urlsplit(url).query)
+            assert query["redirect_uri"] == ["https://pi.tail.ts.net/connect/callback"]
+            assert b"Adresse aus der Adresszeile" not in body
+            state = query["state"][0]
+            with respx.mock(assert_all_called=True) as router:
+                router.post(f"{BASE_URL}/api/auth/assertion-exchange").mock(
+                    return_value=httpx.Response(200, json={"userId": 7, "apiKey": "k-cb"})
+                )
+                status, _, body = client.request(
+                    "GET", f"/connect/callback?assertion=B&state={state}", with_cookie=False
+                )
+            assert status == 200
+            assert "Schlüssel übernommen".encode() in body
+            assert b"k-cb" not in body
+            pending_file = Path(settings.display_state_path).parent / "credentials.pending.json"
+            assert json.loads(pending_file.read_text(encoding="utf-8"))["apiKey"] == "k-cb"
+            status, _, body = client.request(
+                "GET", "/connect/callback?assertion=B&state=nope", with_cookie=False
+            )
+            assert status == 400
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_overlay_warning(self, client: Client, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(web_module, "root_is_overlay", lambda: True)
+        client.login()
+        with respx.mock() as router:
+            router.get(f"{BASE_URL}/api/auth/whoami").mock(
+                return_value=httpx.Response(200, json={})
+            )
+            _, _, body = client.request("GET", "/connect")
+        assert b"Overlay" in body
+        assert b"#sd-card-protection" in body
+
+
+# --- the settings page --------------------------------------------------------------------
+
+
+class TestSettingsPage:
+    def test_requires_the_cookie(self, client: Client) -> None:
+        assert client.request("GET", "/settings")[0] == 403
+        assert client.request("POST", "/settings", {}, headers=client.same_origin())[0] == 403
+
+    def test_shows_the_environment_values_and_their_source(self, client: Client) -> None:
+        client.login()
+        _, _, body = client.request("GET", "/settings")
+        assert b"<option value='de' selected>" in body
+        assert b"<option value='0' selected>" in body
+        assert b"value='04:00'" in body
+        assert body.count(b"aus Umgebung/Standard") == 5
+        assert b"studylife-display.timer" in body
+        assert b"STUDYLIFE_BASE_URL" in body and BASE_URL.encode() in body
+        assert b"STUDYLIFE_API_KEY" in body and b"gesetzt" in body
+        assert TOKEN.encode() not in body
+        assert b">k<" not in body
+
+    def test_round_trip_and_precedence(
+        self, client: Client, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The form turns the update check on; the footer then asks (a stub, here).
+        monkeypatch.setattr(web_module, "fetch_latest_tag", lambda: None)
+        client.login()
+        form = {
+            "language": "en",
+            "rotate": "180",
+            "quiet_hours": "23-7",
+            "clear_at": "05:30",
+            "update_check": "on",
+        }
+        status, headers, _ = client.request("POST", "/settings", form, headers=client.same_origin())
+        assert status == 303
+        assert headers["location"] == "/settings?m=saved"
+        settings_file = Path(settings.display_state_path).parent / "settings.json"
+        assert json.loads(settings_file.read_text(encoding="utf-8")) == {
+            "language": "en",
+            "rotate": 180,
+            "quiet_hours": "23-7",
+            "clear_at": "05:30",
+            "update_check": True,
+        }
+        effective = effective_settings(settings)
+        assert effective.display_language == "en"
+        assert effective.display_rotate == 180
+        assert effective.display_quiet_hours == "23-7"
+        assert effective.display_clear_at == "05:30"
+        assert effective.display_update_check is True
+        assert settings.display_language == "de"  # the environment object is untouched
+        _, _, body = client.request("GET", "/settings?m=saved")
+        assert b"Settings saved." in body
+        assert body.count(b"from settings.json") == 5
+        assert b"<option value='180' selected>" in body
+        _, _, body = client.request("GET", "/")
+        assert b"Sign out" in body  # the layouts page follows the new language at once
+
+        # The layout choice shares the file and survives the settings write.
+        client.request("POST", "/layout", {"layout": "week"}, headers=client.same_origin())
+        assert json.loads(settings_file.read_text(encoding="utf-8"))["layout"] == "week"
+        assert json.loads(settings_file.read_text(encoding="utf-8"))["language"] == "en"
+
+        # Reset: the environment values apply again, the layout choice stays.
+        _, headers, _ = client.request("POST", "/settings/reset", {}, headers=client.same_origin())
+        assert headers["location"] == "/settings?m=reset"
+        assert json.loads(settings_file.read_text(encoding="utf-8")) == {"layout": "week"}
+        assert effective_settings(settings).display_language == "de"
+
+    def test_validation_errors_are_shown_inline_and_nothing_is_written(
+        self, client: Client, settings: Settings
+    ) -> None:
+        client.login()
+        form = {"language": "de", "rotate": "90", "quiet_hours": "night", "clear_at": "25:00"}
+        status, _, body = client.request("POST", "/settings", form, headers=client.same_origin())
+        assert status == 400
+        text = body.decode()
+        assert "Bitte die markierten Felder korrigieren" in text
+        assert text.count("class='error'") == 3
+        assert "value='night'" in text and "value='25:00'" in text  # what was typed stays
+        assert not (Path(settings.display_state_path).parent / "settings.json").exists()
+        form["rotate"] = "upside-down"
+        status, _, _ = client.request("POST", "/settings", form, headers=client.same_origin())
+        assert status == 400
+
+    def test_run_honours_a_rotation_changed_in_the_web_interface(
+        self,
+        client: Client,
+        settings: Settings,
+        cached: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("STUDYLIFE_BASE_URL", BASE_URL)
+        monkeypatch.setenv("STUDYLIFE_API_KEY", "k")
+        monkeypatch.setenv("DISPLAY_DRIVER", "file")
+        monkeypatch.setenv("DISPLAY_OUTPUT_PATH", settings.display_output_path)
+        monkeypatch.setenv("DISPLAY_STATE_PATH", settings.display_state_path)
+        monkeypatch.setenv("DISPLAY_CLEAR_AT", "")
+        monkeypatch.setenv("DISPLAY_LAYOUT", "classic")
+        monkeypatch.delenv("DISPLAY_ROTATE", raising=False)
+        seen: list[DashboardData] = []
+        real_render = main_module.render
+
+        def spy(data: DashboardData, language: str, layout: str = "classic") -> Image.Image:
+            seen.append(data)
+            return real_render(data, language, layout)
+
+        monkeypatch.setattr(main_module, "render", spy)
+
+        client.login()
+        form = {"language": "de", "rotate": "180", "quiet_hours": "", "clear_at": ""}
+        client.request("POST", "/settings", form, headers=client.same_origin())
+        assert main(["run"]) == 0  # the fetch fails (offline), the cached snapshot is drawn
+        upright = main_module.render(seen[-1], "de", "classic")
+        with Image.open(settings.display_output_path) as frame:
+            shown = frame.convert("1")
+        assert (
+            ImageChops.difference(shown, upright.transpose(Image.Transpose.ROTATE_180)).getbbox()
+            is None
+        )
+        assert ImageChops.difference(shown, upright).getbbox() is not None

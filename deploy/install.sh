@@ -149,10 +149,11 @@ if [ ! -f "$ENV_FILE" ]; then
   fi
   {
     cat <<'EOF'
-# StudyLife instance and a READ-ONLY API key with the scopes
-# Metrics.GetSummary, Sessions.GetHistory, TimerState.Get.
+# StudyLife instance. The READ-ONLY API key (scopes Metrics.GetSummary,
+# Sessions.GetHistory, TimerState.Get) is filled in by the web interface's connect page
+# (http://<hostname>.local:8795/connect); pasting one here by hand works too.
 STUDYLIFE_BASE_URL=https://studylife.example.com
-STUDYLIFE_API_KEY=replace-me
+STUDYLIFE_API_KEY=
 # Time zone of the StudyLife SERVER (its timestamps carry no offset).
 STUDYLIFE_TIMEZONE=Europe/Berlin
 # DISPLAY_LANGUAGE=de
@@ -160,6 +161,9 @@ STUDYLIFE_TIMEZONE=Europe/Berlin
 # DISPLAY_LAYOUT=auto
 # Web interface: bind address and the access token asked for on its login page.
 # DISPLAY_WEB_BIND=0.0.0.0:8795
+# Optional https URL of this web interface (a Tailscale name, say): StudyLife then
+# redirects straight back to <url>/connect/callback when connecting the account.
+# DISPLAY_PUBLIC_BASE_URL=
 # Copy of the layout choice on the boot partition, restored at boot so that it survives the
 # overlay filesystem. Empty disables it.
 # DISPLAY_PERSIST_PATH=/boot/firmware/studylife-display/settings.json
@@ -204,6 +208,8 @@ install -m 0644 "$SRC/deploy/studylife-display-web.service" /etc/systemd/system/
 install -m 0644 "$SRC/deploy/studylife-display-restore.service" /etc/systemd/system/
 install -m 0644 "$SRC/deploy/studylife-display-persist.service" /etc/systemd/system/
 install -m 0644 "$SRC/deploy/studylife-display-persist.path" /etc/systemd/system/
+install -m 0644 "$SRC/deploy/studylife-display-credentials.service" /etc/systemd/system/
+install -m 0644 "$SRC/deploy/studylife-display-credentials.path" /etc/systemd/system/
 systemctl daemon-reload
 # Restore first (a stored choice from before this run, e.g. after a reflash), then the units
 # that read it. `restart` runs the oneshot again on a re-run; it is a no-op when the state
@@ -212,6 +218,7 @@ systemctl enable studylife-display-restore.service
 systemctl restart studylife-display-restore.service \
   || echo "    note: persist-import failed, see journalctl -u studylife-display-restore.service"
 systemctl enable --now studylife-display-persist.path
+systemctl enable --now studylife-display-credentials.path
 systemctl enable --now studylife-display.timer
 systemctl enable --now studylife-display-web.service
 # A re-run has just reinstalled the package: pick the new code up right away.
@@ -220,9 +227,12 @@ systemctl restart studylife-display-web.service || true
 cat <<EOF
 
 Installed. Next steps:
-  1. sudo nano $ENV_FILE            # URL + API key
-  2. sudo systemctl start studylife-display.service
-  3. journalctl -u studylife-display.service -n 50
+  1. sudo nano $ENV_FILE            # STUDYLIFE_BASE_URL
+  2. sudo systemctl restart studylife-display-web.service
+  3. http://$(hostname).local:8795/connect   # connect the account (no key to copy)
+     or put the key into $ENV_FILE by hand and run
+     sudo systemctl start studylife-display.service
+  4. journalctl -u studylife-display.service -n 50
 The timer refreshes the panel every 5 minutes: systemctl list-timers studylife-display.timer
 Layouts are switched in the web interface:  http://$(hostname).local:8795/
   (journalctl -u studylife-display-web.service -n 50 if it does not answer)

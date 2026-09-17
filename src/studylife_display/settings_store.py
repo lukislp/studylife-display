@@ -1,12 +1,15 @@
-"""The layout choice made in the web interface, persisted next to the cached snapshot.
+"""The choices made in the web interface, persisted next to the cached snapshot.
 
-Precedence: `settings.json` in the state directory (written by `POST /layout`) beats the
-DISPLAY_LAYOUT environment variable, which is the default for a fresh install. The file is
-tiny (`{"layout": "<key|auto>"}`) and written atomically like the cache, so a power cut
-mid-write leaves the previous choice, never half a file.
+`settings.json` in the state directory holds the layout choice (`POST /layout`) and the
+settings page's values (language, rotation, quiet hours, clear time, update check); every
+key is optional and an absent key means "use the environment". Precedence is therefore
+settings.json > environment, resolved by `effective_settings`, which `run` and `serve` both
+go through. The file is validated with the same rules as the environment (WebOverrides in
+config.py) and written atomically like the cache, so a power cut mid-write leaves the
+previous file, never half a one.
 
 Surviving a reboot with the overlay filesystem on: the state directory then lives in RAM,
-so the choice is mirrored to a second copy on the boot partition (DISPLAY_PERSIST_PATH;
+so the file is mirrored to a second copy on the boot partition (DISPLAY_PERSIST_PATH;
 `/boot/firmware` stays writable by root even with the overlay). The unprivileged web
 service keeps writing `settings.json` where it always did; two root-run oneshot units call
 `persist-export` (state directory -> boot partition, triggered by a path unit on every
@@ -21,8 +24,11 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
-from studylife_display.config import Settings
+from pydantic import ValidationError
+
+from studylife_display.config import OVERRIDE_FIELDS, Settings, WebOverrides
 from studylife_display.layouts import AUTO, LAYOUTS
 
 log = logging.getLogger(__name__)
@@ -31,7 +37,7 @@ SETTINGS_FILE = "settings.json"
 
 
 class InvalidSettingsFile(ValueError):
-    """A settings file exists but is not JSON, not an object or names an unknown layout."""
+    """A settings file exists but is not JSON, not an object or holds an invalid value."""
 
 
 def valid_choices() -> frozenset[str]:
@@ -51,47 +57,113 @@ def persist_path(settings: Settings) -> Path | None:
     return Path(settings.display_persist_path) if settings.display_persist_path else None
 
 
-def read_layout_file(path: Path) -> str | None:
-    """The choice in a settings file; None when the file does not exist. Raises
-    InvalidSettingsFile for content that is not `{"layout": <key|auto>}` and OSError when
-    the file exists but cannot be read."""
+# -- the file ----------------------------------------------------------------------------
+
+
+def read_overrides(path: Path) -> WebOverrides | None:
+    """The overrides in a settings file; None when the file does not exist. Raises
+    InvalidSettingsFile for content that is not a JSON object of valid values and OSError
+    when the file exists but cannot be read."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except ValueError as exc:
         raise InvalidSettingsFile(f"{path} is not JSON ({exc})") from exc
-    choice = raw.get("layout") if isinstance(raw, dict) else None
-    if not is_valid_choice(choice):
-        raise InvalidSettingsFile(f"{path} names layout {choice!r}")
-    assert isinstance(choice, str)
-    return choice
+    if not isinstance(raw, dict):
+        raise InvalidSettingsFile(f"{path} is not a JSON object")
+    try:
+        return WebOverrides.model_validate(raw)
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        field = ".".join(str(part) for part in first["loc"]) or "?"
+        raise InvalidSettingsFile(f"{path}: {field}: {first['msg']}") from exc
 
 
-def _write_layout_file(path: Path, choice: str) -> None:
+def read_layout_file(path: Path) -> str | None:
+    """The layout choice in a settings file, or None when the file or the key is absent.
+    Raises like read_overrides."""
+    overrides = read_overrides(path)
+    return None if overrides is None else overrides.layout
+
+
+def _write_overrides(path: Path, overrides: WebOverrides) -> None:
     """Temp file, fsync, rename: a power cut leaves either the old or the new file. The
     fsync matters on the boot partition (FAT, no journal), where a rename that lands before
     the data does can leave an empty file behind."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8") as handle:
-        handle.write(json.dumps({"layout": choice}))
+        handle.write(json.dumps(overrides.as_json()))
         handle.flush()
         os.fsync(handle.fileno())
     tmp.replace(path)
 
 
-def _current_choice(path: Path) -> str | None:
-    """Like read_layout_file, but a missing, unreadable or invalid file is just None."""
+def _current_overrides(path: Path) -> WebOverrides | None:
+    """Like read_overrides, but a missing, unreadable or invalid file is just None."""
     try:
-        return read_layout_file(path)
+        return read_overrides(path)
     except (OSError, ValueError):
         return None
 
 
+def load_overrides(settings: Settings) -> WebOverrides:
+    """The persisted overrides, or none at all when there is no file. A file that cannot be
+    read, is not JSON or holds an invalid value counts as none, with a warning."""
+    path = settings_path(settings)
+    try:
+        overrides = read_overrides(path)
+    except (OSError, ValueError) as exc:
+        log.warning("ignoring %s (%s), using the environment values", path, exc)
+        return WebOverrides()
+    return overrides if overrides is not None else WebOverrides()
+
+
+def save_overrides(settings: Settings, overrides: WebOverrides) -> Path:
+    """Replaces the whole file atomically."""
+    path = settings_path(settings)
+    _write_overrides(path, overrides)
+    return path
+
+
+def update_overrides(settings: Settings, **changes: Any) -> Path:
+    """Merges `changes` (settings.json keys; None removes a key) into the file. Raises
+    ValueError for an invalid value, in which case nothing is written."""
+    current = load_overrides(settings).as_json()
+    for key, value in changes.items():
+        if value is None:
+            current.pop(key, None)
+        else:
+            current[key] = value
+    try:
+        merged = WebOverrides.model_validate(current)
+    except ValidationError as exc:
+        raise ValueError(str(exc)) from exc
+    return save_overrides(settings, merged)
+
+
+def effective_settings(settings: Settings) -> Settings:
+    """The environment settings with settings.json layered on top: the one place `run`,
+    `serve` and `check` get their language, rotation, quiet hours, clear time, update check
+    and layout from."""
+    overrides = load_overrides(settings)
+    changes = {OVERRIDE_FIELDS[key]: value for key, value in overrides.as_json().items()}
+    return settings.model_copy(update=changes) if changes else settings
+
+
+def override_sources(settings: Settings) -> dict[str, bool]:
+    """settings.json key -> whether the file (True) or the environment (False) supplies it."""
+    present = load_overrides(settings).as_json()
+    return {key: key in present for key in OVERRIDE_FIELDS}
+
+
+# -- the layout choice, as before ---------------------------------------------------------
+
+
 def load_layout_choice(settings: Settings) -> str:
     """The persisted choice, or DISPLAY_LAYOUT when there is no file. A file that cannot be
-    read, is not JSON or names an unknown layout falls back the same way, with a warning."""
+    read, is not JSON or holds an invalid value falls back the same way, with a warning."""
     path = settings_path(settings)
     default = settings.display_layout
     try:
@@ -103,12 +175,14 @@ def load_layout_choice(settings: Settings) -> str:
 
 
 def save_layout_choice(settings: Settings, choice: str) -> Path:
-    """Persists `choice` atomically; ValueError for anything but a layout key or "auto"."""
+    """Persists `choice` atomically, keeping the other keys; ValueError for anything but a
+    layout key or "auto"."""
     if not is_valid_choice(choice):
         raise ValueError(f"unknown layout {choice!r} (known: {', '.join(sorted(valid_choices()))})")
-    path = settings_path(settings)
-    _write_layout_file(path, choice)
-    return path
+    return update_overrides(settings, layout=choice)
+
+
+# -- the boot-partition mirror -----------------------------------------------------------
 
 
 def _adopt_directory_owner(path: Path) -> None:
@@ -130,30 +204,30 @@ def export_layout_choice(settings: Settings) -> int:
     """`persist-export`: copy settings.json to DISPLAY_PERSIST_PATH. Exit status: 0 when
     the copy is up to date or there is nothing to copy (no settings file yet, persistence
     disabled), 1 when the settings file is damaged or the copy cannot be written. Nothing is
-    written when the copy already holds the same choice, so the path unit firing on the
+    written when the copy already holds the same content, so the path unit firing on the
     boot-time import costs no write on the boot partition."""
     target = persist_path(settings)
     if target is None:
-        log.info("DISPLAY_PERSIST_PATH is empty, not exporting the layout choice")
+        log.info("DISPLAY_PERSIST_PATH is empty, not exporting the settings")
         return 0
     source = settings_path(settings)
     try:
-        choice = read_layout_file(source)
+        overrides = read_overrides(source)
     except (OSError, ValueError) as exc:
-        log.error("not exporting the layout choice: %s", exc)
+        log.error("not exporting the settings: %s", exc)
         return 1
-    if choice is None:
+    if overrides is None:
         log.info("no %s yet, nothing to export", source)
         return 0
-    if _current_choice(target) == choice:
-        log.debug("%s already holds layout %s", target, choice)
+    if _current_overrides(target) == overrides:
+        log.debug("%s already holds %s", target, overrides.as_json())
         return 0
     try:
-        _write_layout_file(target, choice)
+        _write_overrides(target, overrides)
     except OSError as exc:
         log.error("could not write %s: %s", target, exc)
         return 1
-    log.info("exported layout %s to %s", choice, target)
+    log.info("exported settings %s to %s", overrides.as_json(), target)
     return 0
 
 
@@ -164,29 +238,29 @@ def import_layout_choice(settings: Settings) -> int:
     nothing to import (no copy, persistence disabled, local file already current)."""
     source = persist_path(settings)
     if source is None:
-        log.info("DISPLAY_PERSIST_PATH is empty, not importing a layout choice")
+        log.info("DISPLAY_PERSIST_PATH is empty, not importing settings")
         return 0
     target = settings_path(settings)
     try:
-        choice = read_layout_file(source)
+        overrides = read_overrides(source)
     except (OSError, ValueError) as exc:
-        log.error("not importing the layout choice, keeping %s as it is: %s", target, exc)
+        log.error("not importing the settings, keeping %s as it is: %s", target, exc)
         return 1
-    if choice is None:
+    if overrides is None:
         log.info("no %s, nothing to import", source)
         return 0
-    local = _current_choice(target)
-    if local == choice:
-        log.info("%s already holds layout %s", target, choice)
+    local = _current_overrides(target)
+    if local == overrides:
+        log.info("%s already holds %s", target, overrides.as_json())
         return 0
     if local is not None and target.stat().st_mtime > source.stat().st_mtime:
-        log.info("keeping %s (layout %s): newer than %s (layout %s)", target, local, source, choice)
+        log.info("keeping %s: newer than %s", target, source)
         return 0
     try:
-        _write_layout_file(target, choice)
+        _write_overrides(target, overrides)
         _adopt_directory_owner(target)
     except OSError as exc:
         log.error("could not write %s: %s", target, exc)
         return 1
-    log.info("restored layout %s from %s", choice, source)
+    log.info("restored settings %s from %s", overrides.as_json(), source)
     return 0

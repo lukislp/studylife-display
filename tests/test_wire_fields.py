@@ -32,6 +32,26 @@ VERIFIED: dict[str, frozenset[str]] = {
             "weekQuota.targetMax",
             "weekQuota.percent",
             "weekQuota.warning",
+            "monthQuota",
+            "ects",
+            "ects.earned",
+            "ects.total",
+            "averageGrade",
+            "forecast",
+            "forecast.available",
+            "forecast.alreadyDone",
+            "forecast.date",
+            "forecast.recentWeeklyHours",
+            "monthComparison",
+            "neglectedCourse",
+            "neglectedCourse.courseId",
+            "neglectedCourse.courseName",
+            "neglectedCourse.lastStudied",
+            "neglectedCourse.daysSince",
+            "courseHours",
+            "topics",
+            "topics.completed",
+            "topics.total",
             "program",
             "program.name",
             "upcomingCourseGoals",
@@ -74,7 +94,15 @@ VERIFIED: dict[str, frozenset[str]] = {
 
 # Fields that do NOT exist and must never appear in USED_FIELDS (they were plausible enough
 # to be invented once).
-FORBIDDEN = {"hours.today", "isPaused", "courseId"}
+FORBIDDEN = {
+    "hours.today",
+    "isPaused",
+    "courseId",
+    "ects.percent",
+    "forecast.graduationDate",
+    "neglectedCourse.name",
+    "topics.done",
+}
 
 
 class Recorder(dict[str, Any]):

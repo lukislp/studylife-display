@@ -41,7 +41,7 @@ def test_round_trip(settings: Settings) -> None:
 
 
 def test_valid_choices_are_the_layouts_plus_auto() -> None:
-    assert valid_choices() == {"auto", "classic", "focus", "exam", "week"}
+    assert valid_choices() == {"auto", "classic", "focus", "exam", "week", "semester"}
 
 
 def test_invalid_key_is_rejected_and_nothing_is_written(settings: Settings) -> None:

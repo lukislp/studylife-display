@@ -146,7 +146,9 @@ EOF
   done
   systemctl daemon-reload
   systemctl enable studylife-display-restore.service studylife-display-persist.path \
-    studylife-display.timer studylife-display-web.service >/dev/null 2>&1 || true
+    studylife-display-credentials.path studylife-display.timer \
+    studylife-display-web.service >/dev/null 2>&1 || true
+  systemctl start studylife-display-credentials.path >/dev/null 2>&1 || true
 
   echo "==> restarting the web interface and refreshing the panel once"
   systemctl restart studylife-display-web.service
