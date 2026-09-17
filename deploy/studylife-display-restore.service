@@ -1,0 +1,32 @@
+[Unit]
+Description=StudyLife e-paper dashboard (restore the layout choice from the boot partition)
+Documentation=https://github.com/lukislp/studylife-display
+# Once per boot, after the boot partition is mounted and before anything reads settings.json.
+After=local-fs.target
+Before=studylife-display.timer studylife-display-web.service
+
+[Service]
+Type=oneshot
+# Stays "active (exited)" so the Wants= from the timer and the web service do not re-run it
+# on every restart of those units; the restore is a boot-time step.
+RemainAfterExit=yes
+EnvironmentFile=/etc/studylife-display.env
+ExecStart=/opt/studylife-display/venv/bin/studylife-display persist-import
+
+# Hardening: root that reads the boot partition and writes exactly the state directory.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/studylife-display
+PrivateTmp=yes
+PrivateNetwork=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_FOWNER
+
+[Install]
+WantedBy=multi-user.target

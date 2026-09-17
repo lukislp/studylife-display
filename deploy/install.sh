@@ -58,6 +58,27 @@ fi
 echo "==> state directory $STATE_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$STATE_DIR"
 
+echo "==> boot-partition copy of the layout choice"
+# With the overlay filesystem on (README, "SD-card protection") the state directory lives in
+# RAM; the boot partition is the one place root can still write, so settings.json is mirrored
+# there by two root-only units. Bookworm mounts it at /boot/firmware, older images at /boot.
+# The package default is the Bookworm path; anything else is written into the env file.
+DEFAULT_PERSIST_PATH=/boot/firmware/studylife-display/settings.json
+PERSIST_PATH=""
+if mountpoint -q /boot/firmware; then
+  PERSIST_PATH=/boot/firmware/studylife-display/settings.json
+elif mountpoint -q /boot; then
+  echo "    warning: /boot/firmware is not a mount (older OS?), using /boot instead"
+  PERSIST_PATH=/boot/studylife-display/settings.json
+else
+  echo "    warning: neither /boot/firmware nor /boot is a separate mount; the layout choice"
+  echo "    made in the web interface will NOT survive a reboot with the overlay filesystem on"
+fi
+if [ -n "$PERSIST_PATH" ]; then
+  # Plain mkdir: the boot partition is vfat, which has no modes to install -m.
+  mkdir -p "$(dirname "$PERSIST_PATH")"
+fi
+
 suggest_token() {
   # 32 hex characters from the kernel's random source; openssl is usually there, od always.
   if command -v openssl >/dev/null 2>&1; then
@@ -106,7 +127,13 @@ STUDYLIFE_TIMEZONE=Europe/Berlin
 # DISPLAY_LAYOUT=auto
 # Web interface: bind address and the access token asked for on its login page.
 # DISPLAY_WEB_BIND=0.0.0.0:8795
+# Copy of the layout choice on the boot partition, restored at boot so that it survives the
+# overlay filesystem. Empty disables it.
+# DISPLAY_PERSIST_PATH=/boot/firmware/studylife-display/settings.json
 EOF
+    if [ "$PERSIST_PATH" != "$DEFAULT_PERSIST_PATH" ]; then
+      printf 'DISPLAY_PERSIST_PATH=%s\n' "$PERSIST_PATH"
+    fi
     printf 'DISPLAY_WEB_TOKEN=%s
 ' "$WEB_TOKEN"
   } > "$ENV_FILE"
@@ -119,13 +146,29 @@ else
     echo "    note: it has no DISPLAY_WEB_TOKEN yet - the web interface will refuse to start"
     echo "    until you add one (at least 12 characters), e.g. DISPLAY_WEB_TOKEN=$(suggest_token)"
   fi
+  # The only line ever added to an existing env file: a non-default persist path, once.
+  if [ "$PERSIST_PATH" != "$DEFAULT_PERSIST_PATH" ] \
+     && ! grep -q '^DISPLAY_PERSIST_PATH=' "$ENV_FILE"; then
+    echo "    adding DISPLAY_PERSIST_PATH=$PERSIST_PATH (this system's boot partition)"
+    printf 'DISPLAY_PERSIST_PATH=%s\n' "$PERSIST_PATH" >> "$ENV_FILE"
+  fi
 fi
 
 echo "==> systemd units"
 install -m 0644 "$SRC/deploy/studylife-display.service" /etc/systemd/system/
 install -m 0644 "$SRC/deploy/studylife-display.timer" /etc/systemd/system/
 install -m 0644 "$SRC/deploy/studylife-display-web.service" /etc/systemd/system/
+install -m 0644 "$SRC/deploy/studylife-display-restore.service" /etc/systemd/system/
+install -m 0644 "$SRC/deploy/studylife-display-persist.service" /etc/systemd/system/
+install -m 0644 "$SRC/deploy/studylife-display-persist.path" /etc/systemd/system/
 systemctl daemon-reload
+# Restore first (a stored choice from before this run, e.g. after a reflash), then the units
+# that read it. `restart` runs the oneshot again on a re-run; it is a no-op when the state
+# directory is already current.
+systemctl enable studylife-display-restore.service
+systemctl restart studylife-display-restore.service \
+  || echo "    note: persist-import failed, see journalctl -u studylife-display-restore.service"
+systemctl enable --now studylife-display-persist.path
 systemctl enable --now studylife-display.timer
 systemctl enable --now studylife-display-web.service
 # A re-run has just reinstalled the package: pick the new code up right away.

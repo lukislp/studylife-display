@@ -1,0 +1,29 @@
+[Unit]
+Description=StudyLife e-paper dashboard (copy the layout choice to the boot partition)
+Documentation=https://github.com/lukislp/studylife-display
+
+[Service]
+Type=oneshot
+# Root on purpose: with the overlay filesystem on, the boot partition is the only place on
+# the SD card that is still written through, and it is owned by root. The web service stays
+# unprivileged and never touches it; this unit is triggered by studylife-display-persist.path
+# whenever settings.json changes.
+EnvironmentFile=/etc/studylife-display.env
+ExecStart=/opt/studylife-display/venv/bin/studylife-display persist-export
+
+# Hardening: root that may read the state directory and write exactly one directory on the
+# boot partition (either mount layout; the missing one is ignored), nothing else. No
+# network, no devices, and only the capabilities needed to read the service user's files.
+ProtectSystem=strict
+ReadWritePaths=-/boot/firmware/studylife-display -/boot/studylife-display
+PrivateTmp=yes
+PrivateNetwork=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_CHOWN CAP_FOWNER

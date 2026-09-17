@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     # overrides this value.
     display_layout: Literal["auto", "classic", "focus", "exam", "week"] = "auto"
 
+    # A second copy of settings.json on the boot partition, which stays writable by root
+    # even when Raspberry Pi OS's overlay filesystem turns the rest of the SD card (the state
+    # directory included) into RAM. `persist-export` writes it, `persist-import` restores it
+    # at boot; both are run by root-only systemd units, the web service never touches it.
+    # Empty disables the mirror (the choice then lives only in the state directory).
+    display_persist_path: str = "/boot/firmware/studylife-display/settings.json"
+
     # The web interface (`studylife-display serve`): where it listens and the access
     # token the person installing chooses. `serve` refuses to start with an empty or
     # short token, so an unconfigured install never exposes the panel controls to the

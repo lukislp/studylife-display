@@ -1,4 +1,5 @@
-"""Command line entry point: `studylife-display run|preview|check|serve`."""
+"""Command line entry point: `studylife-display run|preview|check|serve`, plus the
+`persist-export|persist-import` pair the root-only systemd units call."""
 
 from __future__ import annotations
 
@@ -19,7 +20,12 @@ from studylife_display.model import DashboardData, build_dashboard
 from studylife_display.panel_lock import PanelLockTimeout, panel_lock
 from studylife_display.render import render
 from studylife_display.sample import sample_payloads
-from studylife_display.settings_store import load_layout_choice, valid_choices
+from studylife_display.settings_store import (
+    export_layout_choice,
+    import_layout_choice,
+    load_layout_choice,
+    valid_choices,
+)
 from studylife_display.snapshot import Snapshot, fetch_snapshot, load_snapshot, save_snapshot
 from studylife_display.studylife_client import StudyLifeApiError, StudyLifeClient
 from studylife_display.times import zone
@@ -219,6 +225,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("check", help="call the API and print what it returned; no display")
     sub.add_parser("serve", help="the web interface for switching layouts (needs a token)")
+    # Run by the root-only systemd units, never by the web service: mirror the layout choice
+    # to the boot partition and back so it survives a reboot with the overlay filesystem on.
+    sub.add_parser(
+        "persist-export",
+        help="copy settings.json to DISPLAY_PERSIST_PATH (the boot partition); systemd path unit",
+    )
+    sub.add_parser(
+        "persist-import",
+        help="restore settings.json from DISPLAY_PERSIST_PATH; run once at boot",
+    )
     return parser
 
 
@@ -245,6 +261,10 @@ def main(argv: list[str] | None = None) -> int:
         return command_preview(settings, args.out, use_sample, args.layout)
     if args.command == "serve":
         return command_serve(settings)
+    if args.command == "persist-export":
+        return export_layout_choice(settings)
+    if args.command == "persist-import":
+        return import_layout_choice(settings)
     return command_check(settings)
 
 

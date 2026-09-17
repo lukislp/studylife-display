@@ -1,0 +1,15 @@
+[Unit]
+Description=Mirror the StudyLife dashboard's layout choice to the boot partition on change
+Documentation=https://github.com/lukislp/studylife-display
+# Watching starts after the boot-time restore so the first event of a boot is a real change
+# (the restore's own write is picked up by export anyway and skipped as identical).
+After=studylife-display-restore.service
+
+[Path]
+# settings.json is written by the web service as a temp file plus rename; the rename into
+# place is what fires this unit. The parent directory is watched while the file is absent.
+PathChanged=/var/lib/studylife-display/settings.json
+Unit=studylife-display-persist.service
+
+[Install]
+WantedBy=multi-user.target
