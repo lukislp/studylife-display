@@ -8,8 +8,9 @@
 A study dashboard for [StudyLife](https://github.com/lukislp/studylife) on a 7.5" e-paper
 panel: a Raspberry Pi on the desk that shows, without a screen to unlock or a tab to find,
 how today is going. It reads three read-only endpoints every five minutes and redraws the
-panel; between refreshes the Pi and the panel sleep. Four layouts are built in, an "auto"
-mode picks between them, and a small web interface on the Pi switches them from a phone.
+panel; between refreshes the Pi and the panel sleep. Five layouts are built in, an "auto"
+mode picks between them, and a small web interface on the Pi switches them from a phone,
+connects the StudyLife account without copying a key, and holds the settings.
 
 ## What it shows
 
@@ -40,6 +41,7 @@ empty = no session, light hatch = under 1 h, dense hatch = under 2.5 h, solid = 
 | `focus` | The running timer as the hero: remaining time of the phase (`MM:SS`, a snapshot as of the refresh, not a live tick), "Fokus"/"Pause" and the round; without a timer, today's hours and "kein Timer aktiv". One line with streak and next exam underneath | ![focus](docs/preview-focus.png) |
 | `exam` | The countdown as the hero: inverted "in N Tagen" block, course and date; below it hours per course over the last 28 days (top 5, from the session history) and a streak/today line | ![exam](docs/preview-exam.png) |
 | `week` | The week target as a large bar with hours, target range and percent; the 4-week heatmap large with weekday initials and per-week sums; today's hours and streak at the bottom | ![week](docs/preview-week.png) |
+| `semester` | ECTS earned of total as a big number with a progress bar, the average grade (or "noch keine Note"), the expected graduation date ("nicht verfügbar" / "abgeschlossen"), the course that has gone longest without a session (or "alle Kurse aktiv"), topics completed of total, and the programme name. Never picked by `auto`; all of it from `metrics/summary` (`ects`, `averageGrade`, `forecast`, `neglectedCourse`, `topics`) | ![semester](docs/preview-semester.png) |
 
 Every layout keeps the header line (date, "aktualisiert HH:MM" and the stale marker), because
 that line is the only way to tell an old frame from a fresh one.
@@ -51,7 +53,8 @@ that line is the only way to tell an old frame from a fresh one.
 2. otherwise `focus` while a timer is running;
 3. otherwise `classic`.
 
-The choice comes from, in order of precedence, `settings.json` next to the cached snapshot
+`semester` is never chosen automatically: it is the view to switch to on purpose. The
+choice comes from, in order of precedence, `settings.json` next to the cached snapshot
 (written by the web interface) and the `DISPLAY_LAYOUT` variable. Switching layouts is a full
 refresh of the panel like every other update. `studylife-display preview --sample --layout
 <key|auto> --out frame.png` renders any of them without a panel or an instance.
@@ -75,12 +78,15 @@ update; the web interface shows it above the layouts and `/healthz` reports it.
 
 ## Web interface
 
-`studylife-display serve` runs a small page on the Pi (port **8795**, `DISPLAY_WEB_BIND`)
-that shows a preview of every layout plus `auto`, lets you pick one ("Übernehmen" saves the
-choice and refreshes the panel right away) and has a "Jetzt aktualisieren" button for a
-refresh without a change. It is reachable wherever the Pi is: on the LAN as
-`http://<hostname>.local:8795/`, or over Tailscale/WireGuard if the Pi is in such a network.
-It is plain HTTP for the LAN; do not port-forward it to the internet.
+`studylife-display serve` runs a small site on the Pi (port **8795**, `DISPLAY_WEB_BIND`)
+with three pages: **Layout** shows a preview of every layout plus `auto`, lets you pick one
+("Übernehmen" saves the choice and refreshes the panel right away) and has a "Jetzt
+aktualisieren" button for a refresh without a change; **Verbinden** connects the StudyLife
+account (see [Connecting the account](#connecting-the-account)); **Einstellungen** holds
+the settings that need no SSH (see [Settings in the web interface](#settings-in-the-web-interface)).
+It is reachable wherever the Pi is: on the LAN as `http://<hostname>.local:8795/`, or over
+Tailscale/WireGuard if the Pi is in such a network. It is plain HTTP for the LAN; do not
+port-forward it to the internet.
 
 - **The token is yours to choose.** `DISPLAY_WEB_TOKEN` (at least 12 characters) is asked for
   on the login page; the installer suggests a random one and writes it into the root-owned
@@ -91,12 +97,13 @@ It is plain HTTP for the LAN; do not port-forward it to the internet.
   token under a key drawn at process start. Sessions therefore end when the service restarts,
   and the token itself is never stored in the browser. Every state-changing request also
   requires a same-origin `Sec-Fetch-Site`/`Origin` header.
-- **What it never does:** nothing on the browser path calls the StudyLife API. Previews are
+- **What it never does:** nothing on the layout page calls the StudyLife API. Previews are
   drawn from the cached payloads (or from sample data, marked as such, before the first
   successful fetch), and a refresh runs the same pipeline as the five-minute timer: fetch
   with cache fallback, render, show. The timer's `run` and the web service share the panel
   through a lock file (`panel.lock` in the state directory), so a click never collides with
-  the scheduled refresh; the loser waits up to 60 s.
+  the scheduled refresh; the loser waits up to 60 s. The connect page is the one exception:
+  it redeems the consent assertion and asks `/api/auth/whoami` whose key it holds.
 - Standard library only (`http.server`), inline CSS, no external resources, usable on a phone.
   One log line per request on stderr, never containing the token or the cookie.
 - The footer shows the running version. With `DISPLAY_UPDATE_CHECK=true` it also says when a
@@ -107,6 +114,58 @@ It is plain HTTP for the LAN; do not port-forward it to the internet.
 - During [quiet hours](#quiet-hours-and-the-daily-clear) the page says "Ruhezeit bis HH:MM";
   "Übernehmen" and "Jetzt aktualisieren" still work - a click is an explicit request, only
   the schedule pauses.
+
+### Connecting the account
+
+The `Verbinden` page obtains the API key through StudyLife's consent flow (the same one
+`studylife-cli login` uses), so no key is ever displayed, copied or typed:
+
+1. "Verbindung starten" generates a PKCE pair and a single-use state (ten minutes, kept in
+   the web process's memory only) and shows the link
+   `https://<instance>/connect/client/studylife-display?redirect_uri=…&state=…&code_challenge=…&code_challenge_method=S256`.
+2. Open it on any device, sign in to StudyLife and approve. StudyLife redirects the browser
+   to `http://localhost:8795/connect/callback?assertion=…&state=…` - an address that browser
+   cannot load, on purpose: StudyLife accepts as a redirect URI only https or the
+   [RFC 8252](https://www.rfc-editor.org/rfc/rfc8252#section-7.3) loopback, never the Pi's
+   plain-http LAN address.
+3. Copy that whole address from the address bar and paste it into the form on the page. The
+   Pi checks the state, redeems the assertion together with the PKCE verifier (which never
+   left the Pi, so the pasted URL alone is worth nothing to anyone else) and receives the
+   key.
+
+With an https name for the web interface (`DISPLAY_PUBLIC_BASE_URL=https://pi.tail.example.ts.net`,
+a Tailscale name say), step 3 disappears: the redirect URI becomes
+`<that>/connect/callback`, the web interface handles it directly, and the page says so.
+That URI has to be registered on the client as well. An SSH port forward
+(`ssh -L 8795:localhost:8795 pi@<hostname>`) has the same effect for the loopback URI, since
+`localhost:8795` in your browser then *is* the Pi.
+
+The key never reaches the browser. The web service (unprivileged) writes it to
+`credentials.pending.json` in the state directory, readable by `pi` only;
+`studylife-display-credentials.path` (root) sees the file appear and runs
+`studylife-display credentials-apply`, which validates it, rewrites exactly the
+`STUDYLIFE_API_KEY=` line of `/etc/studylife-display.env` (added when missing, every other
+byte untouched, atomic replace, mode and owner kept), deletes the pending file, restarts
+the web service and starts one refresh. The page says "Schlüssel übernommen, Dienst startet
+neu"; sign in again afterwards (sessions end with the restart) and the page shows the
+connected instance and what `GET /api/auth/whoami` says about the key (user ID and
+credential slot - that endpoint carries no name or e-mail).
+
+**Overlay caveat:** with the [overlay filesystem](#sd-card-protection) on, `/etc` is
+RAM-backed and a key applied now is gone at the next reboot. The page warns when it
+detects that; connect first, enable the overlay afterwards.
+
+### Settings in the web interface
+
+`Einstellungen` holds language, rotation, quiet hours, the daily clear time and the update
+check. They are saved into the same `settings.json` as the layout choice (so they survive a
+reboot the same way, see [SD-card protection](#sd-card-protection)), validated with the
+same rules as the environment variables (an invalid value is shown next to the field and
+nothing is written), and take precedence over the environment: `run`, `serve` and `check`
+all read the effective values through one `effective_settings()` step. "Auf Umgebungswerte
+zurücksetzen" removes them again; the layout choice stays. The refresh interval is
+systemd's (`studylife-display.timer`) and is shown read-only, as are the environment-only
+values (instance URL, key and token as set/not set, time zone, paths, bind address).
 
 ### Health endpoint
 
@@ -152,9 +211,14 @@ Set the driver board's switches to **B** (0.47R, the setting for the V2 panel) a
 
 ## StudyLife setup
 
-Register a client on your StudyLife instance through
-[studylife-developers](https://github.com/lukislp/studylife-developers) and issue an API key
-with exactly these read-only scopes:
+Register the display as a client on your StudyLife instance through
+[studylife-developers](https://github.com/lukislp/studylife-developers), once:
+
+| Field | Value |
+| --- | --- |
+| Client ID | `studylife-display` |
+| Requested scopes | `Metrics.GetSummary`, `Sessions.GetHistory`, `TimerState.Get` |
+| Redirect URIs | `http://localhost:8795/connect/callback` (the port from `DISPLAY_WEB_BIND`), plus `https://<DISPLAY_PUBLIC_BASE_URL>/connect/callback` if you use one |
 
 | Scope | Endpoint |
 | --- | --- |
@@ -162,29 +226,36 @@ with exactly these read-only scopes:
 | `Sessions.GetHistory` | `GET /api/sessions/history?days=28&onlyCompleted=true` |
 | `TimerState.Get` | `GET /api/timerstate` |
 
-`Auth.Whoami` is implied. Nothing here writes: the display cannot start, stop or change a
-session, so a key that ends up on a lost SD card can only ever read your study statistics.
+`Auth.Whoami` is implied for every key. Nothing here writes: the display cannot start,
+stop or change a session, so a key that ends up on a lost SD card can only ever read your
+study statistics. Then put the instance URL into `/etc/studylife-display.env` and connect
+from the web interface (`http://<hostname>.local:8795/connect`, see
+[Connecting the account](#connecting-the-account)); the key lands in the environment file
+by itself. Issuing a key by hand in studylife-developers and pasting it into
+`STUDYLIFE_API_KEY=` still works and stays the fallback.
 
-Configuration (environment, or `/etc/studylife-display.env` on the Pi):
+Configuration (environment, or `/etc/studylife-display.env` on the Pi). The values marked
+*web* can also be set on the settings page, which then takes precedence:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `STUDYLIFE_BASE_URL` | – | Your instance, e.g. `https://studylife.example.com` |
-| `STUDYLIFE_API_KEY` | – | The key from above |
+| `STUDYLIFE_API_KEY` | – | Filled in by the connect page; or a key issued by hand. Empty until then |
 | `STUDYLIFE_TIMEZONE` | `Europe/Berlin` | Time zone of the **server**; its timestamps carry no offset |
-| `DISPLAY_LANGUAGE` | `de` | `de` or `en` |
+| `DISPLAY_LANGUAGE` | `de` | `de` or `en` (*web*) |
 | `DISPLAY_DRIVER` | `waveshare` | `waveshare` (the panel) or `file` (a PNG) |
 | `DISPLAY_OUTPUT_PATH` | `./frame.png` | Where the `file` driver writes |
-| `DISPLAY_ROTATE` | `0` | `180` when the panel is mounted upside down; applied by the driver, anything but 0/180 is refused |
-| `DISPLAY_STATE_PATH` | `/var/lib/studylife-display/last.json` | Cached last snapshot; `settings.json`, `status.json`, `last_clear`, `update_check.json` and `panel.lock` live in the same directory |
+| `DISPLAY_ROTATE` | `0` | `180` when the panel is mounted upside down; applied by the driver, anything but 0/180 is refused (*web*) |
+| `DISPLAY_STATE_PATH` | `/var/lib/studylife-display/last.json` | Cached last snapshot; `settings.json`, `status.json`, `last_clear`, `update_check.json`, `panel.lock` and the short-lived `credentials.pending.json` live in the same directory |
 | `DISPLAY_STALE_ERROR_HOURS` | `24` | Age of the cached snapshot from which the stale screen replaces the dashboard |
-| `DISPLAY_QUIET_HOURS` | – | `HH-HH` or `HH:MM-HH:MM`, may wrap past midnight (`23-7`); no scheduled refresh inside. Empty = off |
-| `DISPLAY_CLEAR_AT` | `04:00` | Time of the daily full clear against ghosting; empty = off |
-| `DISPLAY_UPDATE_CHECK` | `false` | Let the web interface ask GitHub (once per 6 h) whether a newer release exists |
-| `DISPLAY_LAYOUT` | `auto` | `auto`, `classic`, `focus`, `exam` or `week`; overridden by the choice made in the web interface |
+| `DISPLAY_QUIET_HOURS` | – | `HH-HH` or `HH:MM-HH:MM`, may wrap past midnight (`23-7`); no scheduled refresh inside. Empty = off (*web*) |
+| `DISPLAY_CLEAR_AT` | `04:00` | Time of the daily full clear against ghosting; empty = off (*web*) |
+| `DISPLAY_UPDATE_CHECK` | `false` | Let the web interface ask GitHub (once per 6 h) whether a newer release exists (*web*) |
+| `DISPLAY_LAYOUT` | `auto` | `auto`, `classic`, `focus`, `exam`, `week` or `semester`; overridden by the choice made in the web interface |
 | `DISPLAY_PERSIST_PATH` | `/boot/firmware/studylife-display/settings.json` | Copy of the web interface's choice on the boot partition, restored at boot (see [SD-card protection](#sd-card-protection)); empty disables it |
 | `DISPLAY_WEB_BIND` | `0.0.0.0:8795` | Where `serve` listens |
 | `DISPLAY_WEB_TOKEN` | – | Access token of the web interface, at least 12 characters; `serve` refuses to start without one |
+| `DISPLAY_PUBLIC_BASE_URL` | – | Optional https URL under which the web interface is reachable (a Tailscale name); the connect flow then redirects straight back to `<url>/connect/callback`. Must be registered on the client too |
 | `HTTP_TIMEOUT_SECONDS` | `10` | Per request |
 
 `STUDYLIFE_TIMEZONE` matters more than it looks: StudyLife serialises every DateTime as naive
@@ -210,24 +281,25 @@ that zone, and a session from 23:30 to 00:30 counts half an hour on each of the 
    with the `pi` extra (the Waveshare library straight from its git repository plus
    `spidev`, `gpiozero`, `lgpio`), writes a template `/etc/studylife-display.env`, asks
    for the web interface's access token (Enter accepts the suggested random one), and
-   enables the systemd timer, the web service and the two root-only units that carry the
-   layout choice across reboots. Re-running it updates the code and never overwrites an
-   existing env file; for updates see [Updating](#updating).
-3. Put the URL and the key into `/etc/studylife-display.env`, then:
+   enables the systemd timer, the web service, the two root-only units that carry the
+   settings across reboots and the one that applies the API key. Re-running it updates the
+   code and never overwrites an existing env file; for updates see [Updating](#updating).
+3. Put the instance URL into `/etc/studylife-display.env`, restart the web service
+   (`sudo systemctl restart studylife-display-web.service`) and connect the account at
+   `http://<hostname>.local:8795/connect` (see
+   [Connecting the account](#connecting-the-account)). The key is applied and the first
+   refresh runs by itself; `journalctl -u studylife-display.service -n 50` shows it. The
+   fallback is a key issued by hand in `STUDYLIFE_API_KEY=` followed by
+   `sudo systemctl start studylife-display.service`.
 
-   ```bash
-   sudo systemctl start studylife-display.service
-   journalctl -u studylife-display.service -n 50
-   ```
-
-   The first refresh appears within a few seconds. From then on the timer runs `studylife-display run`
-   every five minutes, and `http://<hostname>.local:8795/` switches layouts (see
-   [Web interface](#web-interface)).
+   From then on the timer runs `studylife-display run` every five minutes, and
+   `http://<hostname>.local:8795/` switches layouts (see [Web interface](#web-interface)).
 
 ### SD-card protection
 
 A Pi that refreshes a panel for years should not be writing to its SD card at all. After the
-installer has run and the first refresh has worked:
+installer has run, the account is connected and the first refresh has worked (the key lives
+in `/etc`, which the overlay turns into RAM - connect first):
 
 ```bash
 sudo raspi-config nonint enable_overlayfs   # root filesystem read-only, writes go to RAM
@@ -239,9 +311,9 @@ With the overlay on, `/var/lib/studylife-display/last.json` lives in RAM too, wh
 the cache only needs to survive until the next successful fetch, not a reboot. To change the
 configuration later, `sudo raspi-config nonint disable_overlayfs`, reboot, edit, re-enable.
 
-The layout chosen in the web interface (`settings.json` in the same directory) would be lost
-the same way, so it is mirrored to the **boot partition**, the one part of the SD card the
-overlay leaves writable (`/boot/firmware`, owned by root):
+The layout and the settings chosen in the web interface (`settings.json` in the same
+directory) would be lost the same way, so the file is mirrored to the **boot partition**,
+the one part of the SD card the overlay leaves writable (`/boot/firmware`, owned by root):
 
 - The web service keeps writing `settings.json` into the state directory exactly as before;
   it runs unprivileged and never touches the boot partition.
@@ -263,6 +335,12 @@ the copy on the boot partition just mirrors it. The installer picks `/boot` on i
 still mount the boot partition there, and disables the mirror (`DISPLAY_PERSIST_PATH=`) when
 neither is a separate mount. The file is tiny and changes only when you switch layouts, so
 the extra writes to the boot partition are not what SD-card protection is about.
+
+The API key takes the same root-only road in the other direction: the web service writes
+`credentials.pending.json` into the state directory, `studylife-display-credentials.path`
+starts `studylife-display-credentials.service` (root, `credentials-apply`), which puts the
+key into `/etc/studylife-display.env` and deletes the file. That unit may write `/etc` and
+the state directory and nothing else.
 
 ### Updating
 
@@ -332,7 +410,10 @@ before showing it, the layouts (and their golden frames) stay upright.
 | `Permission denied: /dev/spidev0.0` or GPIO errors | The `pi` user is not in `spi`/`gpio`: `sudo usermod -aG spi,gpio pi`, then log in again |
 | Panel stays white, service exits 0 | Driver-board switches (B / 0) and the FPC cable's orientation |
 | Header shows `· vor N min` | The last fetch failed; `journalctl -u studylife-display.service` names the reason, and so does `/healthz` |
-| Panel says **Schlüssel abgelehnt** / **API key rejected** | StudyLife answered 401/403: the key is wrong or misses a scope (`Metrics.GetSummary`, `Sessions.GetHistory`, `TimerState.Get`); fix `/etc/studylife-display.env` and `sudo systemctl start studylife-display.service` |
+| Panel says **Schlüssel abgelehnt** / **API key rejected** | StudyLife answered 401/403: no key yet, the key is wrong or misses a scope (`Metrics.GetSummary`, `Sessions.GetHistory`, `TimerState.Get`); connect again from `/connect` (or fix `/etc/studylife-display.env`) and `sudo systemctl start studylife-display.service` |
+| Connect page: StudyLife shows an error instead of the consent screen | The client `studylife-display` is not registered on that instance, or the redirect URI (`http://localhost:8795/connect/callback`, or the `DISPLAY_PUBLIC_BASE_URL` one) is not on its list - the server matches it character for character |
+| Connect page says "Schlüssel übernommen" but the key never arrives | `journalctl -u studylife-display-credentials.service -n 20`; `systemctl status studylife-display-credentials.path` must be active. With the overlay on, the key is gone after a reboot: disable it, connect, re-enable |
+| Connect page says the pasted address does not belong to this attempt | The link was regenerated (or the web service restarted) in between; generate a new link and go through StudyLife again |
 | Panel says **Daten veraltet** / **Data is stale** | No successful fetch for `DISPLAY_STALE_ERROR_HOURS`; the last error is on the screen and in `/healthz` |
 | Panel says **Keine Daten** / **No data** | The very first fetch failed and there is nothing to fall back to; `studylife-display check` shows the API error |
 | The panel does not refresh at night | `DISPLAY_QUIET_HOURS` is set; `journalctl -u studylife-display.service` shows "quiet hours ... not refreshing" |
@@ -348,7 +429,7 @@ before showing it, the layouts (and their golden frames) stay upright.
 ```bash
 uv sync
 uv run studylife-display preview --sample --out frame.png   # no instance needed
-uv run studylife-display preview --sample --layout exam --out frame.png
+uv run studylife-display preview --sample --layout semester --out frame.png
 uv run studylife-display preview --out frame.png            # against your instance (.env)
 DISPLAY_DRIVER=file DISPLAY_STATE_PATH=./state/last.json DISPLAY_WEB_TOKEN=local-dev-token \
   uv run studylife-display serve                            # http://127.0.0.1:8795/
@@ -363,7 +444,7 @@ The `pi` extra is not installed by `uv sync` and is never imported outside
 `tests/golden/<layout>_<language>.png` are the reference frames; after an intentional layout
 change regenerate them with `uv run pytest --update-goldens` and commit the result together
 with the previews in `docs/` (`uv run studylife-display preview --sample --layout <key> --out
-docs/preview-<key>.png` for each of the four; `docs/preview.png` is the classic one).
+docs/preview-<key>.png` for each of the five; `docs/preview.png` is the classic one).
 Layouts live in `src/studylife_display/layouts/`, one module each, registered in
 `layouts/__init__.py`; the drawing helpers they share are in `layouts/common.py`, the error
 screens in `layouts/error.py`. Rotation is applied in `driver.py` only, so the goldens are

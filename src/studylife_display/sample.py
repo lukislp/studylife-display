@@ -88,6 +88,26 @@ def sample_payloads(
             },
         ],
         "weeklyReport": {"hours": 12.5, "topCourseName": "Betriebssysteme"},
+        "ects": {"earned": 65, "total": 180},
+        "averageGrade": 2.3,
+        "forecast": {
+            "available": True,
+            "alreadyDone": False,
+            "date": _naive(
+                datetime.combine(today + timedelta(days=790), datetime.min.time(), tzinfo=tz)
+            ),
+            "recentWeeklyHours": 12.5,
+        },
+        "neglectedCourse": {
+            "courseId": 3,
+            "courseName": "Datenbanken",
+            "lastStudied": _naive(
+                datetime.combine(today - timedelta(days=12), datetime.min.time(), tzinfo=tz)
+                + timedelta(hours=9)
+            ),
+            "daysSince": 12,
+        },
+        "topics": {"completed": 34, "total": 52},
         "asOf": _naive(now.astimezone(tz)),
     }
 

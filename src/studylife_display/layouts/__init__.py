@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from PIL import Image
 
-from studylife_display.layouts import classic, exam, focus, week
+from studylife_display.layouts import classic, exam, focus, semester, week
 from studylife_display.model import DashboardData
 
 Renderer = Callable[[DashboardData, str], Image.Image]
@@ -79,6 +79,21 @@ LAYOUTS: dict[str, LayoutSpec] = {
                 ),
             },
             render=week.render,
+        ),
+        LayoutSpec(
+            key="semester",
+            name={"de": "Semester", "en": "Semester"},
+            description={
+                "de": (
+                    "ECTS mit Fortschrittsbalken, Notenschnitt, Abschlussprognose, "
+                    "vernachlässigter Kurs und Themen; nie automatisch gewählt."
+                ),
+                "en": (
+                    "ECTS with a progress bar, average grade, graduation forecast, neglected "
+                    "course and topics; never picked automatically."
+                ),
+            },
+            render=semester.render,
         ),
     )
 }

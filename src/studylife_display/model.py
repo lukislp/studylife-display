@@ -40,6 +40,23 @@ USED_FIELDS: dict[str, frozenset[str]] = {
             "upcomingCourseGoals[].courseName",
             "upcomingCourseGoals[].daysLeft",
             "upcomingCourseGoals[].targetDate",
+            "ects",
+            "ects.earned",
+            "ects.total",
+            "averageGrade",
+            "forecast",
+            "forecast.available",
+            "forecast.alreadyDone",
+            "forecast.date",
+            "forecast.recentWeeklyHours",
+            "neglectedCourse",
+            "neglectedCourse.courseId",
+            "neglectedCourse.courseName",
+            "neglectedCourse.lastStudied",
+            "neglectedCourse.daysSince",
+            "topics",
+            "topics.completed",
+            "topics.total",
         }
     ),
     "history": frozenset({"[].startTime", "[].endTime", "[].courseName"}),
@@ -71,6 +88,36 @@ class TimerInfo:
 
 
 @dataclass(frozen=True)
+class Ects:
+    earned: float
+    total: float
+
+
+@dataclass(frozen=True)
+class Forecast:
+    # `available` False: not enough data yet; `already_done`: every course is completed.
+    available: bool
+    already_done: bool
+    date: date | None
+    recent_weekly_hours: float
+
+
+@dataclass(frozen=True)
+class NeglectedCourse:
+    course_id: int
+    course_name: str
+    # Both None when the course was never studied inside the server's lookback window.
+    last_studied: datetime | None
+    days_since: int | None
+
+
+@dataclass(frozen=True)
+class Topics:
+    completed: int
+    total: int
+
+
+@dataclass(frozen=True)
 class DashboardData:
     today_hours: float
     week_hours: float
@@ -86,6 +133,14 @@ class DashboardData:
     week_quota: WeekQuota
     timer: TimerInfo | None
     program_name: str | None
+    # The semester figures (the "semester" layout): ECTS, average grade (None without a
+    # graded course), graduation forecast, the neglected course (None when the server's
+    # gate is not met) and topic progress.
+    ects: Ects
+    average_grade: float | None
+    forecast: Forecast
+    neglected_course: NeglectedCourse | None
+    topics: Topics
     fetched_at: datetime
     now: datetime
     stale_minutes: int
@@ -158,6 +213,42 @@ def _next_goal(metrics: dict[str, Any], tz: ZoneInfo) -> NextGoal | None:
     )
 
 
+def _optional_float(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _optional_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return int(value)
+
+
+def _forecast(metrics: dict[str, Any], tz: ZoneInfo) -> Forecast:
+    forecast = _as_dict(metrics.get("forecast"))
+    moment = parse_optional(forecast.get("date"), tz)
+    return Forecast(
+        available=bool(forecast.get("available")),
+        already_done=bool(forecast.get("alreadyDone")),
+        date=moment.date() if moment else None,
+        recent_weekly_hours=_as_float(forecast.get("recentWeeklyHours")),
+    )
+
+
+def _neglected_course(metrics: dict[str, Any], tz: ZoneInfo) -> NeglectedCourse | None:
+    raw = metrics.get("neglectedCourse")
+    if not isinstance(raw, dict):
+        return None
+    name = raw.get("courseName")
+    return NeglectedCourse(
+        course_id=_as_int(raw.get("courseId")),
+        course_name=str(name) if name else "",
+        last_studied=parse_optional(raw.get("lastStudied"), tz),
+        days_since=_optional_int(raw.get("daysSince")),
+    )
+
+
 def _timer(timer: dict[str, Any], tz: ZoneInfo) -> TimerInfo | None:
     if not timer.get("isRunning"):
         return None
@@ -195,6 +286,8 @@ def build_dashboard(
     quota = _as_dict(metrics.get("weekQuota"))
     program = _as_dict(metrics.get("program"))
     program_name = program.get("name")
+    ects = _as_dict(metrics.get("ects"))
+    topics = _as_dict(metrics.get("topics"))
 
     obtained = fetched_at if fetched_at is not None else now
     stale_seconds = now.timestamp() - obtained.timestamp()
@@ -215,6 +308,13 @@ def build_dashboard(
         ),
         timer=_timer(timer, tz),
         program_name=str(program_name) if program_name else None,
+        ects=Ects(earned=_as_float(ects.get("earned")), total=_as_float(ects.get("total"))),
+        average_grade=_optional_float(metrics.get("averageGrade")),
+        forecast=_forecast(metrics, tz),
+        neglected_course=_neglected_course(metrics, tz),
+        topics=Topics(
+            completed=_as_int(topics.get("completed")), total=_as_int(topics.get("total"))
+        ),
         fetched_at=obtained,
         now=now,
         stale_minutes=max(0, int(stale_seconds // 60)),

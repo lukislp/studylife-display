@@ -1,19 +1,55 @@
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import AnyHttpUrl, field_validator
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from studylife_display.daily_clear import parse_clear_at
 from studylife_display.quiet_hours import parse_quiet_hours
 
 ROTATIONS = (0, 180)
+LANGUAGES = ("de", "en")
+LAYOUT_CHOICES = ("auto", "classic", "focus", "exam", "week", "semester")
+
+Language = Literal["de", "en"]
+LayoutChoice = Literal["auto", "classic", "focus", "exam", "week", "semester"]
+
+
+# The validators are plain functions so that the environment settings below and the
+# overrides written by the web interface (WebOverrides) apply exactly the same rules; a
+# value the settings page accepts is one the environment would have accepted too.
+
+
+def check_rotation(value: int) -> int:
+    if value not in ROTATIONS:
+        raise ValueError(f"DISPLAY_ROTATE must be one of {ROTATIONS}, not {value}")
+    return value
+
+
+def check_quiet_hours(value: str) -> str:
+    parse_quiet_hours(value)  # raises ValueError with the reason
+    return value.strip()
+
+
+def check_clear_at(value: str) -> str:
+    parse_clear_at(value)  # raises ValueError with the reason
+    return value.strip()
+
+
+def check_public_base_url(value: str) -> str:
+    value = value.strip().rstrip("/")
+    if value and not value.lower().startswith("https://"):
+        raise ValueError("DISPLAY_PUBLIC_BASE_URL must be an https:// URL (or empty)")
+    return value
 
 
 class Settings(BaseSettings):
     """Runtime configuration, loaded from environment variables / .env.
 
     On the Pi the systemd unit passes /etc/studylife-display.env as EnvironmentFile; during
-    development a .env in the working directory does the same job.
+    development a .env in the working directory does the same job. The values the web
+    interface may override (language, rotation, quiet hours, clear time, update check,
+    layout) are read through `effective_settings` in `settings_store`, which layers
+    `settings.json` on top of these.
     """
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
@@ -21,8 +57,10 @@ class Settings(BaseSettings):
     # This single person's StudyLife instance and a READ-ONLY API key (Metrics.GetSummary,
     # Sessions.GetHistory, TimerState.Get). The display never writes anything back, so a key
     # with more scopes than that is a liability sitting on an SD card, not a convenience.
+    # The key may be empty until the account is connected from the web interface, which
+    # writes it into the environment file through `credentials-apply`.
     studylife_base_url: AnyHttpUrl
-    studylife_api_key: str
+    studylife_api_key: str = ""
 
     # Every DateTime StudyLife sends is naive local time of the SERVER (no offset in the JSON).
     # Timestamps are interpreted in this zone explicitly, never with the Pi's own clock
@@ -32,7 +70,7 @@ class Settings(BaseSettings):
 
     # Language of the rendered text. The default is German because that is the language of
     # the StudyLife instance this was built for; "en" swaps every label.
-    display_language: Literal["de", "en"] = "de"
+    display_language: Language = "de"
 
     # "waveshare" drives the real panel over SPI, "file" writes the frame as a PNG (used by
     # `preview`, by the tests and by anyone developing without the hardware attached).
@@ -72,9 +110,9 @@ class Settings(BaseSettings):
 
     # Which layout to draw (see studylife_display.layouts). "auto" picks per refresh:
     # the exam countdown when one is due within a week, the timer while it runs, classic
-    # otherwise. A settings.json written by the web interface next to the cache
-    # overrides this value.
-    display_layout: Literal["auto", "classic", "focus", "exam", "week"] = "auto"
+    # otherwise ("semester" is never picked automatically). A settings.json written by the
+    # web interface next to the cache overrides this value.
+    display_layout: LayoutChoice = "auto"
 
     # A second copy of settings.json on the boot partition, which stays writable by root
     # even when Raspberry Pi OS's overlay filesystem turns the rest of the SD card (the state
@@ -90,14 +128,19 @@ class Settings(BaseSettings):
     display_web_bind: str = "0.0.0.0:8795"
     display_web_token: str = ""
 
+    # Optional: an https URL under which this web interface is reachable (a Tailscale name,
+    # say). When set, the connect page lets StudyLife redirect straight back to
+    # `<url>/connect/callback`; without it the browser lands on a localhost URL the person
+    # pastes into the page instead. StudyLife refuses a plain-http LAN address as a redirect
+    # URI (RFC 8252 allows only https or a loopback), hence the two modes.
+    display_public_base_url: str = ""
+
     http_timeout_seconds: float = 10.0
 
     @field_validator("display_rotate")
     @classmethod
     def _rotation(cls, value: int) -> int:
-        if value not in ROTATIONS:
-            raise ValueError(f"DISPLAY_ROTATE must be one of {ROTATIONS}, not {value}")
-        return value
+        return check_rotation(value)
 
     @field_validator("display_stale_error_hours")
     @classmethod
@@ -109,11 +152,59 @@ class Settings(BaseSettings):
     @field_validator("display_quiet_hours")
     @classmethod
     def _quiet_hours(cls, value: str) -> str:
-        parse_quiet_hours(value)  # raises ValueError with the reason
-        return value.strip()
+        return check_quiet_hours(value)
 
     @field_validator("display_clear_at")
     @classmethod
     def _clear_at(cls, value: str) -> str:
-        parse_clear_at(value)  # raises ValueError with the reason
-        return value.strip()
+        return check_clear_at(value)
+
+    @field_validator("display_public_base_url")
+    @classmethod
+    def _public_base_url(cls, value: str) -> str:
+        return check_public_base_url(value)
+
+
+class WebOverrides(BaseModel):
+    """What the web interface may persist in `settings.json`: every field optional, an
+    absent one meaning "use the environment". The keys are the JSON names in the file;
+    each maps onto the Settings field of the same meaning (see OVERRIDE_FIELDS)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    layout: LayoutChoice | None = None
+    language: Language | None = None
+    rotate: int | None = None
+    quiet_hours: str | None = None
+    clear_at: str | None = None
+    update_check: bool | None = None
+
+    @field_validator("rotate")
+    @classmethod
+    def _rotation(cls, value: int | None) -> int | None:
+        return None if value is None else check_rotation(value)
+
+    @field_validator("quiet_hours")
+    @classmethod
+    def _quiet_hours(cls, value: str | None) -> str | None:
+        return None if value is None else check_quiet_hours(value)
+
+    @field_validator("clear_at")
+    @classmethod
+    def _clear_at(cls, value: str | None) -> str | None:
+        return None if value is None else check_clear_at(value)
+
+    def as_json(self) -> dict[str, Any]:
+        """Only the fields that are set, in a stable order."""
+        return {key: value for key, value in self.model_dump().items() if value is not None}
+
+
+# settings.json key -> Settings field it overrides.
+OVERRIDE_FIELDS: dict[str, str] = {
+    "layout": "display_layout",
+    "language": "display_language",
+    "rotate": "display_rotate",
+    "quiet_hours": "display_quiet_hours",
+    "clear_at": "display_clear_at",
+    "update_check": "display_update_check",
+}

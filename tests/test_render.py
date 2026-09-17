@@ -12,8 +12,9 @@ from studylife_display.layouts.classic import HEATMAP_BOX
 from studylife_display.layouts.common import format_minutes_seconds
 from studylife_display.layouts.exam import HERO_BOX
 from studylife_display.layouts.focus import remaining_seconds
+from studylife_display.layouts.semester import ECTS_BAR_BOX
 from studylife_display.layouts.week import QUOTA_BAR_BOX
-from studylife_display.model import DashboardData, TimerInfo, build_dashboard
+from studylife_display.model import DashboardData, Forecast, TimerInfo, build_dashboard
 from studylife_display.render import (
     COUNTDOWN_BOX,
     HEIGHT,
@@ -138,6 +139,29 @@ class TestLayouts:
         # Only the target ticks cross the empty part.
         assert black_fraction(image, empty) < 0.05
 
+    def test_semester_ects_bar_is_filled_to_the_earned_fraction(self, data: DashboardData) -> None:
+        image = render(data, "de", "semester")
+        left, top, right, bottom = ECTS_BAR_BOX
+        fraction = data.ects.earned / data.ects.total
+        filled = (left + 4, top + 4, left + int((right - left) * fraction) - 8, bottom - 4)
+        empty = (left + int((right - left) * fraction) + 8, top + 4, right - 4, bottom - 4)
+        assert black_fraction(image, filled) > 0.95
+        assert black_fraction(image, empty) == 0.0
+
+    def test_semester_placeholders_when_the_figures_are_missing(self, data: DashboardData) -> None:
+        full = render(data, "de", "semester")
+        bare = replace(
+            data,
+            average_grade=None,
+            forecast=Forecast(False, False, None, 0.0),
+            neglected_course=None,
+        )
+        image = render(bare, "de", "semester")
+        assert image.size == (WIDTH, HEIGHT)
+        assert differing_fraction(full, image) > 0.0
+        done = replace(data, forecast=Forecast(True, True, None, 0.0))
+        assert differing_fraction(render(done, "de", "semester"), image) > 0.0
+
     def test_exam_lists_the_courses_with_the_most_hours_first(self, data: DashboardData) -> None:
         names = [name for name, _ in data.course_hours]
         hours = [hours for _, hours in data.course_hours]
@@ -148,7 +172,14 @@ class TestLayouts:
 class TestGoldens:
     @pytest.mark.parametrize(
         ("layout", "language"),
-        [("classic", "de"), ("classic", "en"), ("focus", "de"), ("exam", "de"), ("week", "de")],
+        [
+            ("classic", "de"),
+            ("classic", "en"),
+            ("focus", "de"),
+            ("exam", "de"),
+            ("week", "de"),
+            ("semester", "de"),
+        ],
     )
     def test_matches_golden(
         self, data: DashboardData, layout: str, language: str, update_goldens: bool
