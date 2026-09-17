@@ -8,11 +8,14 @@
 A study dashboard for [StudyLife](https://github.com/lukislp/studylife) on a 7.5" e-paper
 panel: a Raspberry Pi on the desk that shows, without a screen to unlock or a tab to find,
 how today is going. It reads three read-only endpoints every five minutes and redraws the
-panel; between refreshes the Pi and the panel sleep.
+panel; between refreshes the Pi and the panel sleep. Four layouts are built in, an "auto"
+mode picks between them, and a small web interface on the Pi switches them from a phone.
 
 ## What it shows
 
 ![Preview of the rendered dashboard](docs/preview.png)
+
+This is the `classic` layout; the others are under [Layouts](#layouts).
 
 | Element | Source |
 | --- | --- |
@@ -27,6 +30,57 @@ panel; between refreshes the Pi and the panel sleep.
 
 The text is German by default; `DISPLAY_LANGUAGE=en` switches every label. Heatmap levels:
 empty = no session, light hatch = under 1 h, dense hatch = under 2.5 h, solid = 2.5 h and more.
+
+## Layouts
+
+| Key | Shows | Preview |
+| --- | --- | --- |
+| `classic` | Everything above at a glance: today's hours, streak, countdown, week target, heatmap, timer line | ![classic](docs/preview-classic.png) |
+| `focus` | The running timer as the hero: remaining time of the phase (`MM:SS`, a snapshot as of the refresh, not a live tick), "Fokus"/"Pause" and the round; without a timer, today's hours and "kein Timer aktiv". One line with streak and next exam underneath | ![focus](docs/preview-focus.png) |
+| `exam` | The countdown as the hero: inverted "in N Tagen" block, course and date; below it hours per course over the last 28 days (top 5, from the session history) and a streak/today line | ![exam](docs/preview-exam.png) |
+| `week` | The week target as a large bar with hours, target range and percent; the 4-week heatmap large with weekday initials and per-week sums; today's hours and streak at the bottom | ![week](docs/preview-week.png) |
+
+Every layout keeps the header line (date, "aktualisiert HH:MM" and the stale marker), because
+that line is the only way to tell an old frame from a fresh one.
+
+`auto` (the default) picks per refresh:
+
+1. `exam` when the next course goal is due in **7 days or fewer** (today, overdue and
+   negative counts included);
+2. otherwise `focus` while a timer is running;
+3. otherwise `classic`.
+
+The choice comes from, in order of precedence, `settings.json` next to the cached snapshot
+(written by the web interface) and the `DISPLAY_LAYOUT` variable. Switching layouts is a full
+refresh of the panel like every other update. `studylife-display preview --sample --layout
+<key|auto> --out frame.png` renders any of them without a panel or an instance.
+
+## Web interface
+
+`studylife-display serve` runs a small page on the Pi (port **8795**, `DISPLAY_WEB_BIND`)
+that shows a preview of every layout plus `auto`, lets you pick one ("Übernehmen" saves the
+choice and refreshes the panel right away) and has a "Jetzt aktualisieren" button for a
+refresh without a change. It is reachable wherever the Pi is: on the LAN as
+`http://<hostname>.local:8795/`, or over Tailscale/WireGuard if the Pi is in such a network.
+It is plain HTTP for the LAN; do not port-forward it to the internet.
+
+- **The token is yours to choose.** `DISPLAY_WEB_TOKEN` (at least 12 characters) is asked for
+  on the login page; the installer suggests a random one and writes it into the root-owned
+  environment file, and `serve` refuses to start when the variable is empty or short. The
+  code never ships a default.
+- A correct token (compared in constant time; a wrong one costs a one-second delay and a 403)
+  sets the cookie `studylife_display_session`: `HttpOnly`, `SameSite=Strict`, an HMAC of the
+  token under a key drawn at process start. Sessions therefore end when the service restarts,
+  and the token itself is never stored in the browser. Every state-changing request also
+  requires a same-origin `Sec-Fetch-Site`/`Origin` header.
+- **What it never does:** nothing on the browser path calls the StudyLife API. Previews are
+  drawn from the cached payloads (or from sample data, marked as such, before the first
+  successful fetch), and a refresh runs the same pipeline as the five-minute timer: fetch
+  with cache fallback, render, show. The timer's `run` and the web service share the panel
+  through a lock file (`panel.lock` in the state directory), so a click never collides with
+  the scheduled refresh; the loser waits up to 60 s.
+- Standard library only (`http.server`), inline CSS, no external resources, usable on a phone.
+  One log line per request on stderr, never containing the token or the cookie.
 
 ## Hardware
 
@@ -70,7 +124,10 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi):
 | `DISPLAY_LANGUAGE` | `de` | `de` or `en` |
 | `DISPLAY_DRIVER` | `waveshare` | `waveshare` (the panel) or `file` (a PNG) |
 | `DISPLAY_OUTPUT_PATH` | `./frame.png` | Where the `file` driver writes |
-| `DISPLAY_STATE_PATH` | `/var/lib/studylife-display/last.json` | Cached last snapshot |
+| `DISPLAY_STATE_PATH` | `/var/lib/studylife-display/last.json` | Cached last snapshot; `settings.json` and `panel.lock` live in the same directory |
+| `DISPLAY_LAYOUT` | `auto` | `auto`, `classic`, `focus`, `exam` or `week`; overridden by the choice made in the web interface |
+| `DISPLAY_WEB_BIND` | `0.0.0.0:8795` | Where `serve` listens |
+| `DISPLAY_WEB_TOKEN` | – | Access token of the web interface, at least 12 characters; `serve` refuses to start without one |
 | `HTTP_TIMEOUT_SECONDS` | `10` | Per request |
 
 `STUDYLIFE_TIMEZONE` matters more than it looks: StudyLife serialises every DateTime as naive
@@ -93,7 +150,9 @@ that zone, and a session from 23:30 to 00:30 counts half an hour on each of the 
    It installs the system packages Pillow needs, enables SPI, creates a virtualenv in
    `/opt/studylife-display`, installs this package with the `pi` extra (the Waveshare
    library straight from its git repository plus `spidev`, `gpiozero`, `lgpio`), writes a
-   template `/etc/studylife-display.env` and enables the systemd timer.
+   template `/etc/studylife-display.env`, asks for the web interface's access token
+   (Enter accepts the suggested random one), and enables the systemd timer and the web
+   service. Re-running it updates the code and never overwrites an existing env file.
 3. Put the URL and the key into `/etc/studylife-display.env`, then:
 
    ```bash
@@ -102,7 +161,8 @@ that zone, and a session from 23:30 to 00:30 counts half an hour on each of the 
    ```
 
    The first refresh appears within a few seconds. From then on the timer runs `studylife-display run`
-   every five minutes.
+   every five minutes, and `http://<hostname>.local:8795/` switches layouts (see
+   [Web interface](#web-interface)).
 
 ### SD-card protection
 
@@ -116,8 +176,10 @@ sudo reboot
 ```
 
 With the overlay on, `/var/lib/studylife-display/last.json` lives in RAM too, which is fine:
-the cache only needs to survive until the next successful fetch, not a reboot. To change the
-configuration later, `sudo raspi-config nonint disable_overlayfs`, reboot, edit, re-enable.
+the cache only needs to survive until the next successful fetch, not a reboot. Note that the
+layout chosen in the web interface (`settings.json` in the same directory) is then also lost
+on reboot and falls back to `DISPLAY_LAYOUT`; set that variable to your usual choice. To change
+the configuration later, `sudo raspi-config nonint disable_overlayfs`, reboot, edit, re-enable.
 
 ### Refresh cadence, and why full refresh only
 
@@ -144,6 +206,8 @@ the other way round, rotate in `driver.py` (`image.rotate(180)`) rather than in 
 | Header shows `· vor N min` | The last fetch failed; `journalctl -u studylife-display.service` names the reason (403 = a scope is missing on the key) |
 | Exit code 1 and `no cached snapshot` | The very first fetch failed and there is nothing to fall back to; `studylife-display check` shows the API error |
 | Session times off by an hour or two | `STUDYLIFE_TIMEZONE` must be the server's zone, not the Pi's |
+| Web interface does not answer | `journalctl -u studylife-display-web.service -n 20`; `DISPLAY_WEB_TOKEN` missing or shorter than 12 characters makes `serve` exit immediately |
+| Refresh from the browser reports "busy" or waits | The timer's refresh holds `panel.lock`; it is over within seconds, a stuck one times out after 60 s |
 | `studylife-display check` | Calls the three endpoints and prints what the dashboard would be built from, without touching the panel |
 
 ## Development
@@ -151,7 +215,10 @@ the other way round, rotate in `driver.py` (`image.rotate(180)`) rather than in 
 ```bash
 uv sync
 uv run studylife-display preview --sample --out frame.png   # no instance needed
+uv run studylife-display preview --sample --layout exam --out frame.png
 uv run studylife-display preview --out frame.png            # against your instance (.env)
+DISPLAY_DRIVER=file DISPLAY_STATE_PATH=./state/last.json DISPLAY_WEB_TOKEN=local-dev-token \
+  uv run studylife-display serve                            # http://127.0.0.1:8795/
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
@@ -160,9 +227,12 @@ uv run mypy
 
 The `pi` extra is not installed by `uv sync` and is never imported outside
 `WaveshareDisplay.__init__`, so everything - including the render tests - runs on a laptop.
-`tests/golden/*.png` are the reference frames; after an intentional layout change regenerate
-them with `uv run pytest --update-goldens` and commit the result together with
-`docs/preview.png` (`uv run studylife-display preview --sample --out docs/preview.png`).
+`tests/golden/<layout>_<language>.png` are the reference frames; after an intentional layout
+change regenerate them with `uv run pytest --update-goldens` and commit the result together
+with the previews in `docs/` (`uv run studylife-display preview --sample --layout <key> --out
+docs/preview-<key>.png` for each of the four; `docs/preview.png` is the classic one).
+Layouts live in `src/studylife_display/layouts/`, one module each, registered in
+`layouts/__init__.py`; the drawing helpers they share are in `layouts/common.py`.
 
 `tests/test_wire_fields.py` pins every JSON field name the code reads to the verified
 StudyLife wire format. StudyLife never errors on an unknown field, so this test is what

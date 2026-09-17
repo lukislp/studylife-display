@@ -35,9 +35,9 @@ def rendered(monkeypatch: pytest.MonkeyPatch) -> list[DashboardData]:
     seen: list[DashboardData] = []
     real_render = main_module.render
 
-    def spy(data: DashboardData, language: str) -> Image.Image:
+    def spy(data: DashboardData, language: str, layout: str = "classic") -> Image.Image:
         seen.append(data)
-        return real_render(data, language)
+        return real_render(data, language, layout)
 
     monkeypatch.setattr(main_module, "render", spy)
     return seen

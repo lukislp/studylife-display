@@ -39,4 +39,17 @@ class Settings(BaseSettings):
     # or, worse, showing a Python traceback nobody can read from across the room.
     display_state_path: str = "/var/lib/studylife-display/last.json"
 
+    # Which layout to draw (see studylife_display.layouts). "auto" picks per refresh:
+    # the exam countdown when one is due within a week, the timer while it runs, classic
+    # otherwise. A settings.json written by the web interface next to the cache
+    # overrides this value.
+    display_layout: Literal["auto", "classic", "focus", "exam", "week"] = "auto"
+
+    # The web interface (`studylife-display serve`): where it listens and the access
+    # token the person installing chooses. `serve` refuses to start with an empty or
+    # short token, so an unconfigured install never exposes the panel controls to the
+    # LAN by accident.
+    display_web_bind: str = "0.0.0.0:8795"
+    display_web_token: str = ""
+
     http_timeout_seconds: float = 10.0

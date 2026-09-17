@@ -7,7 +7,13 @@ from zoneinfo import ZoneInfo
 import pytest
 from PIL import Image, ImageChops
 
-from studylife_display.model import DashboardData, build_dashboard
+from studylife_display.layouts import LAYOUTS
+from studylife_display.layouts.classic import HEATMAP_BOX
+from studylife_display.layouts.common import format_minutes_seconds
+from studylife_display.layouts.exam import HERO_BOX
+from studylife_display.layouts.focus import remaining_seconds
+from studylife_display.layouts.week import QUOTA_BAR_BOX
+from studylife_display.model import DashboardData, TimerInfo, build_dashboard
 from studylife_display.render import (
     COUNTDOWN_BOX,
     HEIGHT,
@@ -88,11 +94,67 @@ class TestFrame:
         assert set(TEXT["de"]) == set(TEXT["en"])
 
 
+class TestLayouts:
+    @pytest.mark.parametrize("layout", sorted(LAYOUTS))
+    def test_every_layout_is_a_full_frame_in_both_languages(
+        self, data: DashboardData, layout: str
+    ) -> None:
+        for language in ("de", "en"):
+            image = render(data, language, layout)
+            assert image.size == (WIDTH, HEIGHT)
+            assert image.mode == "1"
+
+    def test_unknown_layout_raises(self, data: DashboardData) -> None:
+        with pytest.raises(ValueError):
+            render(data, "de", "holographic")
+
+    def test_default_layout_is_classic(self, data: DashboardData) -> None:
+        assert differing_fraction(render(data, "de"), render(data, "de", "classic")) == 0.0
+
+    def test_exam_hero_block_is_inverted(self, data: DashboardData) -> None:
+        assert black_fraction(render(data, "de", "exam"), HERO_BOX) > 0.5
+        assert black_fraction(render(replace(data, next_goal=None), "de", "exam"), HERO_BOX) > 0.5
+
+    def test_focus_with_a_running_timer_has_no_heatmap(self, data: DashboardData) -> None:
+        assert data.timer is not None and data.timer.is_running
+        assert black_fraction(render(data, "de", "classic"), HEATMAP_BOX) > 0.05
+        assert black_fraction(render(data, "de", "focus"), HEATMAP_BOX) == 0.0
+
+    def test_focus_shows_the_remaining_time_as_a_snapshot(self, data: DashboardData) -> None:
+        # Sample timer: phase ends 18 minutes after `now`.
+        seconds = remaining_seconds(data)
+        assert seconds is not None and format_minutes_seconds(seconds) == "18:00"
+        stopped = replace(data, timer=TimerInfo(False, False, None))
+        assert remaining_seconds(stopped) is None
+        assert render(stopped, "de", "focus").size == (WIDTH, HEIGHT)
+
+    def test_week_quota_bar_is_filled_to_the_hours(self, data: DashboardData) -> None:
+        image = render(data, "de", "week")
+        left, top, right, bottom = QUOTA_BAR_BOX
+        fraction = data.week_quota.hours / data.week_quota.target_max
+        filled = (left + 4, top + 4, left + int((right - left) * fraction) - 8, bottom - 4)
+        empty = (left + int((right - left) * fraction) + 8, top + 4, right - 4, bottom - 4)
+        assert black_fraction(image, filled) > 0.95
+        # Only the target ticks cross the empty part.
+        assert black_fraction(image, empty) < 0.05
+
+    def test_exam_lists_the_courses_with_the_most_hours_first(self, data: DashboardData) -> None:
+        names = [name for name, _ in data.course_hours]
+        hours = [hours for _, hours in data.course_hours]
+        assert names == ["Lineare Algebra", "Datenbanken", "Betriebssysteme"]
+        assert hours == sorted(hours, reverse=True)
+
+
 class TestGoldens:
-    @pytest.mark.parametrize("language", ["de", "en"])
-    def test_matches_golden(self, data: DashboardData, language: str, update_goldens: bool) -> None:
-        image = render(data, language)
-        golden_path = GOLDEN_DIR / f"dashboard_{language}.png"
+    @pytest.mark.parametrize(
+        ("layout", "language"),
+        [("classic", "de"), ("classic", "en"), ("focus", "de"), ("exam", "de"), ("week", "de")],
+    )
+    def test_matches_golden(
+        self, data: DashboardData, layout: str, language: str, update_goldens: bool
+    ) -> None:
+        image = render(data, language, layout)
+        golden_path = GOLDEN_DIR / f"{layout}_{language}.png"
         if update_goldens:
             GOLDEN_DIR.mkdir(exist_ok=True)
             image.save(golden_path)
