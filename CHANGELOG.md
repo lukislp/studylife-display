@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/lukislp/studylife-display/compare/v1.2.0...v1.3.0) (2026-09-17)
+
+
+### Features
+
+* rotation, error screens, quiet hours, daily clear, health endpoint and update script ([#10](https://github.com/lukislp/studylife-display/issues/10)) ([8f7c8b0](https://github.com/lukislp/studylife-display/commit/8f7c8b0f41897b591d4e78ea4870e73765194f7a))
+
 # [1.2.0](https://github.com/lukislp/studylife-display/compare/v1.1.0...v1.2.0) (2026-09-17)
 
 
