@@ -1,5 +1,9 @@
 [Unit]
 Description=Refresh the StudyLife e-paper dashboard every 5 minutes
+# The layout choice is restored from the boot partition first (a no-op without the overlay
+# filesystem, see README "SD-card protection").
+After=studylife-display-restore.service
+Wants=studylife-display-restore.service
 
 [Timer]
 # First refresh a minute after boot (network-online has usually settled by then), then every

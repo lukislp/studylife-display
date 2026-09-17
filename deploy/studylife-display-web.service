@@ -1,8 +1,8 @@
 [Unit]
 Description=StudyLife e-paper dashboard (web interface for switching layouts)
 Documentation=https://github.com/lukislp/studylife-display
-After=network-online.target
-Wants=network-online.target
+After=network-online.target studylife-display-restore.service
+Wants=network-online.target studylife-display-restore.service
 
 [Service]
 Type=simple

@@ -126,6 +126,7 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi):
 | `DISPLAY_OUTPUT_PATH` | `./frame.png` | Where the `file` driver writes |
 | `DISPLAY_STATE_PATH` | `/var/lib/studylife-display/last.json` | Cached last snapshot; `settings.json` and `panel.lock` live in the same directory |
 | `DISPLAY_LAYOUT` | `auto` | `auto`, `classic`, `focus`, `exam` or `week`; overridden by the choice made in the web interface |
+| `DISPLAY_PERSIST_PATH` | `/boot/firmware/studylife-display/settings.json` | Copy of the web interface's choice on the boot partition, restored at boot (see [SD-card protection](#sd-card-protection)); empty disables it |
 | `DISPLAY_WEB_BIND` | `0.0.0.0:8795` | Where `serve` listens |
 | `DISPLAY_WEB_TOKEN` | – | Access token of the web interface, at least 12 characters; `serve` refuses to start without one |
 | `HTTP_TIMEOUT_SECONDS` | `10` | Per request |
@@ -151,8 +152,9 @@ that zone, and a session from 23:30 to 00:30 counts half an hour on each of the 
    `/opt/studylife-display`, installs this package with the `pi` extra (the Waveshare
    library straight from its git repository plus `spidev`, `gpiozero`, `lgpio`), writes a
    template `/etc/studylife-display.env`, asks for the web interface's access token
-   (Enter accepts the suggested random one), and enables the systemd timer and the web
-   service. Re-running it updates the code and never overwrites an existing env file.
+   (Enter accepts the suggested random one), and enables the systemd timer, the web
+   service and the two root-only units that carry the layout choice across reboots.
+   Re-running it updates the code and never overwrites an existing env file.
 3. Put the URL and the key into `/etc/studylife-display.env`, then:
 
    ```bash
@@ -176,10 +178,33 @@ sudo reboot
 ```
 
 With the overlay on, `/var/lib/studylife-display/last.json` lives in RAM too, which is fine:
-the cache only needs to survive until the next successful fetch, not a reboot. Note that the
-layout chosen in the web interface (`settings.json` in the same directory) is then also lost
-on reboot and falls back to `DISPLAY_LAYOUT`; set that variable to your usual choice. To change
-the configuration later, `sudo raspi-config nonint disable_overlayfs`, reboot, edit, re-enable.
+the cache only needs to survive until the next successful fetch, not a reboot. To change the
+configuration later, `sudo raspi-config nonint disable_overlayfs`, reboot, edit, re-enable.
+
+The layout chosen in the web interface (`settings.json` in the same directory) would be lost
+the same way, so it is mirrored to the **boot partition**, the one part of the SD card the
+overlay leaves writable (`/boot/firmware`, owned by root):
+
+- The web service keeps writing `settings.json` into the state directory exactly as before;
+  it runs unprivileged and never touches the boot partition.
+- `studylife-display-persist.path` watches that file and, on every change, runs
+  `studylife-display-persist.service` as root: `studylife-display persist-export` copies
+  the file to `DISPLAY_PERSIST_PATH` (default `/boot/firmware/studylife-display/settings.json`),
+  atomically and only after validating it, and skips the write when the copy is already
+  current.
+- `studylife-display-restore.service` runs `studylife-display persist-import` once per boot,
+  after the boot partition is mounted and before the timer and the web service start. It
+  copies the file back if there is one, and never replaces a valid local file with a
+  damaged or older copy.
+
+Root is needed because the boot partition is root-owned and the two services above are the
+only ones that get it; they are locked down to those two directories (`ProtectSystem=strict`,
+no network, no devices) and the timer and web units stay exactly as unprivileged as before.
+Without the overlay the mechanism is a harmless no-op: the local file survives on its own,
+the copy on the boot partition just mirrors it. The installer picks `/boot` on images that
+still mount the boot partition there, and disables the mirror (`DISPLAY_PERSIST_PATH=`) when
+neither is a separate mount. The file is tiny and changes only when you switch layouts, so
+the extra writes to the boot partition are not what SD-card protection is about.
 
 ### Refresh cadence, and why full refresh only
 
@@ -208,6 +233,7 @@ the other way round, rotate in `driver.py` (`image.rotate(180)`) rather than in 
 | Session times off by an hour or two | `STUDYLIFE_TIMEZONE` must be the server's zone, not the Pi's |
 | Web interface does not answer | `journalctl -u studylife-display-web.service -n 20`; `DISPLAY_WEB_TOKEN` missing or shorter than 12 characters makes `serve` exit immediately |
 | Refresh from the browser reports "busy" or waits | The timer's refresh holds `panel.lock`; it is over within seconds, a stuck one times out after 60 s |
+| Layout choice falls back to `DISPLAY_LAYOUT` after a reboot | `journalctl -u studylife-display-persist -u studylife-display-restore -n 20`; after a choice in the web interface `ls /boot/firmware/studylife-display/` must show `settings.json`, and `systemctl status studylife-display-persist.path` must be active |
 | `studylife-display check` | Calls the three endpoints and prints what the dashboard would be built from, without touching the panel |
 
 ## Development
