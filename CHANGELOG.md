@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/lukislp/studylife-display/compare/v1.0.0...v1.0.1) (2026-09-17)
+
+
+### Bug Fixes
+
+* **ci:** pin the shared workflows to ci-workflows v1.5.1 ([#4](https://github.com/lukislp/studylife-display/issues/4)) ([92a8fc0](https://github.com/lukislp/studylife-display/commit/92a8fc094c98888c6aaf7e668e95fd53c18c0edd))
+
 # 1.0.0 (2026-09-17)
 
 
