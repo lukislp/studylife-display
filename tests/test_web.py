@@ -10,7 +10,7 @@ import io
 import json
 import threading
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -20,9 +20,12 @@ import pytest
 from PIL import Image
 
 from studylife_display import main as main_module
+from studylife_display import package_version
+from studylife_display import web as web_module
 from studylife_display.config import Settings
 from studylife_display.main import main
 from studylife_display.snapshot import Snapshot, save_snapshot
+from studylife_display.status_store import LastError, Status, save_status
 from studylife_display.studylife_client import StudyLifeApiError
 from studylife_display.web import SESSION_COOKIE, DisplayServer, make_server
 
@@ -72,17 +75,41 @@ class Client:
         return {"Origin": f"http://127.0.0.1:{self.port}"}
 
 
+def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
+    values: dict[str, Any] = {
+        "studylife_base_url": BASE_URL,
+        "studylife_api_key": "k",
+        "display_driver": "file",
+        "display_output_path": str(tmp_path / "frame.png"),
+        "display_state_path": str(tmp_path / "state" / "last.json"),
+        "display_web_token": TOKEN,
+        "display_layout": "auto",
+    }
+    values.update(overrides)
+    return Settings(**values)
+
+
+def quiet_hours_around(now: datetime) -> str:
+    """A three-hour quiet window that contains `now`, whatever the clock says."""
+    return f"{(now.hour - 1) % 24}-{(now.hour + 2) % 24}"
+
+
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    return Settings(  # type: ignore[call-arg]
-        studylife_base_url=BASE_URL,  # type: ignore[arg-type]
-        studylife_api_key="k",
-        display_driver="file",
-        display_output_path=str(tmp_path / "frame.png"),
-        display_state_path=str(tmp_path / "state" / "last.json"),
-        display_web_token=TOKEN,
-        display_layout="auto",
-    )
+    return make_settings(tmp_path)
+
+
+@pytest.fixture
+def no_update_check(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Fails the test if the page ever asks GitHub; returns the call log."""
+    calls: list[int] = []
+
+    def must_not_call() -> str | None:
+        calls.append(1)
+        raise AssertionError("the update check reached out although it is off")
+
+    monkeypatch.setattr(web_module, "fetch_latest_tag", must_not_call)
+    return calls
 
 
 @pytest.fixture
@@ -220,7 +247,8 @@ class TestActions:
         status, headers, _ = client.request("POST", "/refresh", {}, headers=client.same_origin())
         assert status == 303
         assert headers["location"] == "/?m=failed"
-        assert not Path(settings.display_output_path).exists()
+        # The "no data" screen went on the panel; the flash still reports the failure.
+        assert Path(settings.display_output_path).exists()
 
     def test_invalid_layout_is_a_400(self, client: Client, cached: Path) -> None:
         client.login()
@@ -284,3 +312,204 @@ class TestServeCommand:
         monkeypatch.setenv("DISPLAY_WEB_TOKEN", TOKEN)
         monkeypatch.setattr(main_module, "serve_web", lambda settings, refresh: 0)
         assert main(["serve"]) == 0
+
+
+def fresh_cache(settings: Settings, sample: Any, tz: ZoneInfo, ok: bool = True) -> datetime:
+    """A snapshot fetched just now plus a matching status.json; returns the moment."""
+    now = datetime.now(tz)
+    metrics, history, timer = sample
+    path = Path(settings.display_state_path)
+    save_snapshot(path, Snapshot(metrics, history, timer, now))
+    save_status(path.parent, Status(last_fetch_ok=ok, last_fetch_at=now, last_panel_update_at=now))
+    return now
+
+
+class TestHealth:
+    def test_no_data_ever_is_a_503_without_a_cookie(self, client: Client) -> None:
+        status, headers, body = client.request("GET", "/healthz")
+        assert status == 503
+        assert headers["content-type"] == "application/json"
+        report = json.loads(body)
+        assert report["status"] == "error"
+        assert report["version"] == package_version()
+        assert report["last_fetch_at"] is None
+        assert report["last_fetch_ok"] is False
+        assert report["stale_minutes"] is None
+        assert report["last_error"] is None
+        assert report["last_panel_update_at"] is None
+        assert report["layout"] is None
+        assert report["quiet_hours_active"] is False
+
+    def test_never_leaks_the_token_or_the_cookie(self, client: Client) -> None:
+        client.login()
+        _, _, body = client.request("GET", "/healthz")
+        assert TOKEN.encode() not in body
+        assert client.cookie is not None
+        assert client.cookie.split("=", 1)[1].encode() not in body
+
+    def test_fresh_cache_is_ok(
+        self, client: Client, settings: Settings, sample: Any, tz: ZoneInfo
+    ) -> None:
+        now = fresh_cache(settings, sample, tz)
+        status, _, body = client.request("GET", "/healthz")
+        assert status == 200
+        report = json.loads(body)
+        assert report["status"] == "ok"
+        assert report["last_fetch_ok"] is True
+        assert report["last_fetch_at"] == now.isoformat()
+        assert report["last_panel_update_at"] == now.isoformat()
+        assert report["stale_minutes"] == 0
+        assert report["layout"] in {"classic", "focus", "exam", "week"}
+
+    def test_failed_fetch_with_a_cache_is_degraded(
+        self, client: Client, settings: Settings, sample: Any, tz: ZoneInfo
+    ) -> None:
+        now = fresh_cache(settings, sample, tz, ok=False)
+        state_dir = Path(settings.display_state_path).parent
+        save_status(
+            state_dir,
+            Status(
+                last_fetch_ok=False,
+                last_fetch_at=now,
+                last_error=LastError("transient", 503, "StudyLife API returned 503", now),
+            ),
+        )
+        status, _, body = client.request("GET", "/healthz")
+        assert status == 200
+        report = json.loads(body)
+        assert report["status"] == "degraded"
+        assert report["last_error"] == {
+            "kind": "transient",
+            "status": 503,
+            "message": "StudyLife API returned 503",
+            "at": now.isoformat(),
+        }
+
+    def test_rejected_key_is_an_error_even_with_a_cache(
+        self, client: Client, settings: Settings, sample: Any, tz: ZoneInfo
+    ) -> None:
+        now = fresh_cache(settings, sample, tz, ok=False)
+        save_status(
+            Path(settings.display_state_path).parent,
+            Status(
+                last_fetch_ok=False,
+                last_error=LastError("rejected", 403, "StudyLife API returned 403", now),
+            ),
+        )
+        status, _, body = client.request("GET", "/healthz")
+        assert status == 503
+        report = json.loads(body)
+        assert report["status"] == "error"
+        assert report["last_error"]["kind"] == "rejected"
+        assert report["last_error"]["status"] == 403
+
+    def test_a_silent_timer_is_degraded_unless_quiet_hours_explain_it(
+        self, tmp_path: Path, offline: None, sample: Any, tz: ZoneInfo
+    ) -> None:
+        for quiet, expected in ((False, "degraded"), (True, "ok")):
+            now = datetime.now(tz)
+            overrides = {"display_quiet_hours": quiet_hours_around(now)} if quiet else {}
+            settings = make_settings(tmp_path / expected, **overrides)
+            metrics, history, timer = sample
+            path = Path(settings.display_state_path)
+            old = now - timedelta(minutes=40)
+            save_snapshot(path, Snapshot(metrics, history, timer, old))
+            save_status(path.parent, Status(last_fetch_ok=True, last_fetch_at=old))
+            report, status = web_module.health_report(settings, now)
+            assert report["status"] == expected, quiet
+            assert status == 200
+            assert report["stale_minutes"] >= 40
+            assert report["quiet_hours_active"] is quiet
+
+    def test_head_and_post(self, client: Client) -> None:
+        status, headers, body = client.request("HEAD", "/healthz")
+        assert status == 503
+        assert body == b""
+        assert headers["content-type"] == "application/json"
+        assert client.request("POST", "/healthz", {})[0] == 404
+
+
+class TestFooterAndNotes:
+    def test_footer_shows_the_version_without_asking_github(
+        self, client: Client, no_update_check: list[int]
+    ) -> None:
+        client.login()
+        _, _, body = client.request("GET", "/")
+        assert f"Version {package_version()}".encode() in body
+        assert b"Neue Version" not in body
+        assert no_update_check == []
+
+    def test_last_error_is_shown_on_the_page(
+        self, client: Client, settings: Settings, tz: ZoneInfo, fixed_now: datetime
+    ) -> None:
+        save_status(
+            Path(settings.display_state_path).parent,
+            Status(last_error=LastError("rejected", 403, "StudyLife API returned 403", fixed_now)),
+        )
+        client.login()
+        _, _, body = client.request("GET", "/")
+        assert b"Letzter Fehler (17.09. 16:45): StudyLife API returned 403" in body
+
+    def test_no_quiet_note_outside_quiet_hours(self, client: Client) -> None:
+        client.login()
+        _, _, body = client.request("GET", "/")
+        assert b"Ruhezeit" not in body
+
+
+class TestUpdateCheck:
+    @pytest.fixture
+    def settings(self, tmp_path: Path) -> Settings:
+        return make_settings(tmp_path, display_update_check=True)
+
+    def test_newer_release_is_announced_and_cached(
+        self, client: Client, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[int] = []
+
+        def fetch() -> str | None:
+            calls.append(1)
+            return "v99.0.0"
+
+        monkeypatch.setattr(web_module, "fetch_latest_tag", fetch)
+        client.login()
+        _, _, body = client.request("GET", "/")
+        assert "Neue Version verfügbar: v99.0.0".encode() in body
+        _, _, body = client.request("GET", "/")
+        assert "Neue Version verfügbar: v99.0.0".encode() in body
+        assert len(calls) == 1  # the second page view came from the cache
+        cache = Path(settings.display_state_path).parent / "update_check.json"
+        assert json.loads(cache.read_text(encoding="utf-8"))["latest"] == "v99.0.0"
+
+    def test_current_or_failed_check_shows_the_version_alone(
+        self, client: Client, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(web_module, "fetch_latest_tag", lambda: None)
+        client.login()
+        _, _, body = client.request("GET", "/")
+        assert f"Version {package_version()}".encode() in body
+        assert b"Neue Version" not in body
+
+
+class TestQuietHoursPage:
+    @pytest.fixture
+    def settings(self, tmp_path: Path, tz: ZoneInfo) -> Settings:
+        return make_settings(tmp_path, display_quiet_hours=quiet_hours_around(datetime.now(tz)))
+
+    def test_page_says_quiet_until(self, client: Client, settings: Settings, tz: ZoneInfo) -> None:
+        client.login()
+        _, _, body = client.request("GET", "/")
+        end = (datetime.now(tz).replace(minute=0) + timedelta(hours=2)).strftime("%H:%M")
+        assert f"Ruhezeit bis {end}".encode() in body
+
+    def test_refresh_still_works_inside_quiet_hours(
+        self, client: Client, cached: Path, settings: Settings
+    ) -> None:
+        client.login()
+        status, headers, _ = client.request("POST", "/refresh", {}, headers=client.same_origin())
+        assert status == 303
+        assert headers["location"] == "/?m=refreshed"
+        assert Path(settings.display_output_path).exists()
+
+    def test_healthz_reports_quiet_hours(self, client: Client) -> None:
+        _, _, body = client.request("GET", "/healthz")
+        assert json.loads(body)["quiet_hours_active"] is True

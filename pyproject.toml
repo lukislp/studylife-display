@@ -1,6 +1,6 @@
 [project]
 name = "studylife-display"
-version = "0.0.0"
+dynamic = ["version"]
 description = "E-paper study dashboard for StudyLife on a Raspberry Pi with the Waveshare 7.5 inch HAT V2."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -37,8 +37,18 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+# The running version comes from the git tag the checkout sits on (semantic-release tags
+# `vX.Y.Z`; the installer and update script check those out), so `importlib.metadata`,
+# the web footer and /healthz report the release that is actually installed. Between
+# tags this is `X.Y.(Z+1).devN+g<sha>`; without any git metadata it falls back to 0.0.0.
+source = "vcs"
+
+[tool.hatch.version.raw-options]
+fallback_version = "0.0.0"
 
 [tool.hatch.metadata]
 # The `pi` extra is a git direct reference (the Waveshare library is not on PyPI).
