@@ -1,4 +1,4 @@
-"""Command line entry point: `studylife-display run|preview|check`."""
+"""Command line entry point: `studylife-display run|preview|check|serve`."""
 
 from __future__ import annotations
 
@@ -6,77 +6,26 @@ import argparse
 import json
 import logging
 import sys
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
 
 from studylife_display.config import Settings
 from studylife_display.driver import Display, FileDisplay, WaveshareDisplay
+from studylife_display.layouts.auto import resolve_layout
 from studylife_display.model import DashboardData, build_dashboard
+from studylife_display.panel_lock import PanelLockTimeout, panel_lock
 from studylife_display.render import render
 from studylife_display.sample import sample_payloads
+from studylife_display.settings_store import load_layout_choice, valid_choices
+from studylife_display.snapshot import Snapshot, fetch_snapshot, load_snapshot, save_snapshot
 from studylife_display.studylife_client import StudyLifeApiError, StudyLifeClient
 from studylife_display.times import zone
+from studylife_display.web import MIN_TOKEN_LENGTH, serve_web
 
 log = logging.getLogger("studylife_display")
-
-HISTORY_DAYS = 28
-
-
-@dataclass(frozen=True)
-class Snapshot:
-    """The three raw payloads plus when they were obtained - exactly what gets cached."""
-
-    metrics: dict[str, Any]
-    history: list[dict[str, Any]]
-    timer: dict[str, Any]
-    fetched_at: datetime
-
-
-def fetch_snapshot(client: StudyLifeClient, now: datetime) -> Snapshot:
-    return Snapshot(
-        metrics=client.get_metrics_summary(),
-        history=client.get_session_history(days=HISTORY_DAYS),
-        timer=client.get_timer_state(),
-        fetched_at=now,
-    )
-
-
-def save_snapshot(path: Path, snapshot: Snapshot) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "fetched_at": snapshot.fetched_at.isoformat(),
-        "metrics": snapshot.metrics,
-        "history": snapshot.history,
-        "timer": snapshot.timer,
-    }
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload), encoding="utf-8")
-    tmp.replace(path)
-
-
-def load_snapshot(path: Path, tz: ZoneInfo) -> Snapshot | None:
-    """The cached snapshot, or None when there is none or it cannot be read."""
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    try:
-        fetched_at = datetime.fromisoformat(raw["fetched_at"])
-        if fetched_at.tzinfo is None:
-            fetched_at = fetched_at.replace(tzinfo=tz)
-        return Snapshot(
-            metrics=dict(raw["metrics"]),
-            history=list(raw["history"]),
-            timer=dict(raw["timer"]),
-            fetched_at=fetched_at.astimezone(tz),
-        )
-    except (KeyError, TypeError, ValueError):
-        return None
 
 
 def make_display(settings: Settings, output_override: str | None = None) -> Display:
@@ -96,9 +45,9 @@ def build(snapshot: Snapshot, now: datetime, tz: ZoneInfo) -> DashboardData:
     )
 
 
-def show(display: Display, data: DashboardData, language: str) -> None:
+def show(display: Display, data: DashboardData, language: str, layout: str = "classic") -> None:
     try:
-        display.show(render(data, language))
+        display.show(render(data, language, layout))
     finally:
         display.sleep()
 
@@ -111,9 +60,15 @@ def _client(settings: Settings) -> StudyLifeClient:
     )
 
 
-def command_run(settings: Settings, output_override: str | None = None) -> int:
-    """Fetch -> build -> render -> show. A fetch failure falls back to the cached snapshot
-    (rendered with the stale marker) and still exits 0; only "no data at all" is an error."""
+def refresh_panel(
+    settings: Settings,
+    layout_choice: str | None = None,
+    output_override: str | None = None,
+) -> int:
+    """Fetch -> build -> resolve layout -> render -> show, under the panel lock. A fetch
+    failure falls back to the cached snapshot (rendered with the stale marker) and still
+    returns 0; only "no data at all" and a lock timeout are errors. `layout_choice` defaults
+    to the persisted choice (settings.json, else DISPLAY_LAYOUT)."""
     tz = zone(settings.studylife_timezone)
     now = datetime.now(tz)
     state_path = Path(settings.display_state_path)
@@ -135,9 +90,19 @@ def command_run(settings: Settings, output_override: str | None = None) -> int:
             log.warning("could not cache the snapshot at %s: %s", state_path, exc)
 
     data = build(snapshot, now, tz)
-    show(make_display(settings, output_override), data, settings.display_language)
+    choice = layout_choice if layout_choice is not None else load_layout_choice(settings)
+    layout = resolve_layout(choice, data)
+    display = make_display(settings, output_override)
+    try:
+        with panel_lock(state_path.parent):
+            show(display, data, settings.display_language, layout)
+    except PanelLockTimeout as exc:
+        log.error("%s - another refresh is stuck, giving up", exc)
+        return 1
     log.info(
-        "shown: today %.2f h, streak %d, stale %d min",
+        "shown %s (%s): today %.2f h, streak %d, stale %d min",
+        layout,
+        choice,
         data.today_hours,
         data.streak_days,
         data.stale_minutes,
@@ -145,15 +110,26 @@ def command_run(settings: Settings, output_override: str | None = None) -> int:
     return 0
 
 
-def command_preview(settings: Settings, output: str, use_sample: bool) -> int:
-    """Renders to a PNG regardless of DISPLAY_DRIVER. With --sample no API is contacted."""
+def command_run(settings: Settings, output_override: str | None = None) -> int:
+    """What the systemd timer calls: one refresh with the persisted layout choice."""
+    return refresh_panel(settings, output_override=output_override)
+
+
+def command_preview(
+    settings: Settings, output: str, use_sample: bool, layout_choice: str | None
+) -> int:
+    """Renders to a PNG regardless of DISPLAY_DRIVER. With --sample no API is contacted and
+    no lock is taken (a PNG somewhere else does not contend with the panel)."""
     if not use_sample:
-        return command_run(settings, output_override=output)
+        return refresh_panel(settings, layout_choice, output_override=output)
     tz = zone(settings.studylife_timezone)
     now = datetime.now(tz)
     metrics, history, timer = sample_payloads(now, tz)
     data = build_dashboard(metrics, history, timer, now, tz)
-    show(FileDisplay(output), data, settings.display_language)
+    choice = layout_choice if layout_choice is not None else load_layout_choice(settings)
+    layout = resolve_layout(choice, data)
+    show(FileDisplay(output), data, settings.display_language, layout)
+    log.info("rendered %s (%s) to %s", layout, choice, output)
     return 0
 
 
@@ -164,6 +140,7 @@ def command_check(settings: Settings) -> int:
     with _client(settings) as client:
         snapshot = fetch_snapshot(client, now)
     data = build(snapshot, now, tz)
+    choice = load_layout_choice(settings)
     report = {
         "fetched_at": data.fetched_at.isoformat(),
         "today_hours": round(data.today_hours, 2),
@@ -192,13 +169,31 @@ def command_check(settings: Settings) -> int:
             "phase_ends_at": data.timer.phase_ends_at.isoformat()
             if data.timer.phase_ends_at
             else None,
+            "current_round": data.timer.current_round,
         },
         "program_name": data.program_name,
         "history_sessions": len(snapshot.history),
         "heatmap": [[round(h, 2) for h in row] for row in data.heatmap],
+        "course_hours": [[name, round(hours, 2)] for name, hours in data.course_hours],
+        "layout_choice": choice,
+        "layout": resolve_layout(choice, data),
     }
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0
+
+
+def command_serve(settings: Settings) -> int:
+    """The web interface. Refuses to bind without a proper access token: the person
+    installing chooses it (deploy/install.sh suggests one), the code never defaults it."""
+    if len(settings.display_web_token) < MIN_TOKEN_LENGTH:
+        log.error(
+            "DISPLAY_WEB_TOKEN is %s; set one with at least %d characters in the environment "
+            "file before starting the web interface",
+            "empty" if not settings.display_web_token else "too short",
+            MIN_TOKEN_LENGTH,
+        )
+        return 2
+    return serve_web(settings, lambda: refresh_panel(settings))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -216,8 +211,14 @@ def build_parser() -> argparse.ArgumentParser:
     preview.add_argument(
         "--sample", action="store_true", help="use built-in sample data, do not call the API"
     )
+    preview.add_argument(
+        "--layout",
+        choices=sorted(valid_choices()),
+        help="layout to render (default: the persisted choice, else DISPLAY_LAYOUT)",
+    )
 
     sub.add_parser("check", help="call the API and print what it returned; no display")
+    sub.add_parser("serve", help="the web interface for switching layouts (needs a token)")
     return parser
 
 
@@ -241,7 +242,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run":
         return command_run(settings)
     if args.command == "preview":
-        return command_preview(settings, args.out, use_sample)
+        return command_preview(settings, args.out, use_sample, args.layout)
+    if args.command == "serve":
+        return command_serve(settings)
     return command_check(settings)
 
 

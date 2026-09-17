@@ -42,8 +42,8 @@ USED_FIELDS: dict[str, frozenset[str]] = {
             "upcomingCourseGoals[].targetDate",
         }
     ),
-    "history": frozenset({"[].startTime", "[].endTime"}),
-    "timer": frozenset({"isRunning", "isBreak", "phaseEndsAt"}),
+    "history": frozenset({"[].startTime", "[].endTime", "[].courseName"}),
+    "timer": frozenset({"isRunning", "isBreak", "phaseEndsAt", "currentRound"}),
 }
 
 
@@ -67,6 +67,7 @@ class TimerInfo:
     is_running: bool
     is_break: bool
     phase_ends_at: datetime | None
+    current_round: int | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,9 @@ class DashboardData:
     heatmap: tuple[tuple[float, ...], ...]
     # Weekday (0 = Monday) of the first heatmap cell, so the renderer can label the columns.
     heatmap_first_weekday: int
+    # Hours per course over the heatmap window, most first; "" is a session without
+    # a course name.
+    course_hours: tuple[tuple[str, float], ...]
     week_quota: WeekQuota
     timer: TimerInfo | None
     program_name: str | None
@@ -120,6 +124,26 @@ def hours_per_day(history: list[dict[str, Any]], days: list[date], tz: ZoneInfo)
     return totals
 
 
+def hours_per_course(
+    history: list[dict[str, Any]], window_start: datetime, window_end: datetime, tz: ZoneInfo
+) -> list[tuple[str, float]]:
+    """Session time per course name inside [window_start, window_end), most first (name as
+    the tie-break so equal totals keep a stable order between refreshes)."""
+    totals: dict[str, float] = {}
+    for session in history:
+        start = parse_optional(session.get("startTime"), tz)
+        end = parse_optional(session.get("endTime"), tz)
+        if start is None or end is None or end <= start:
+            continue
+        hours = overlap_hours(start, end, window_start, window_end)
+        if hours <= 0:
+            continue
+        name = session.get("courseName")
+        key = str(name) if name else ""
+        totals[key] = totals.get(key, 0.0) + hours
+    return sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+
+
 def _next_goal(metrics: dict[str, Any], tz: ZoneInfo) -> NextGoal | None:
     goals = metrics.get("upcomingCourseGoals")
     if not isinstance(goals, list) or not goals:
@@ -141,6 +165,7 @@ def _timer(timer: dict[str, Any], tz: ZoneInfo) -> TimerInfo | None:
         is_running=True,
         is_break=bool(timer.get("isBreak")),
         phase_ends_at=parse_optional(timer.get("phaseEndsAt"), tz),
+        current_round=_as_int(timer.get("currentRound")) or None,
     )
 
 
@@ -157,6 +182,9 @@ def build_dashboard(
     today = local_day(now, tz)
     days = [today - timedelta(days=offset) for offset in range(HEATMAP_DAYS - 1, -1, -1)]
     per_day = hours_per_day(history, days, tz)
+    window_start = day_bounds(days[0], tz)[0]
+    window_end = day_bounds(days[-1], tz)[1]
+    course_hours = tuple(hours_per_course(history, window_start, window_end, tz))
     heatmap = tuple(
         tuple(per_day[row * HEATMAP_COLUMNS : (row + 1) * HEATMAP_COLUMNS])
         for row in range(HEATMAP_ROWS)
@@ -178,6 +206,7 @@ def build_dashboard(
         next_goal=_next_goal(metrics, tz),
         heatmap=heatmap,
         heatmap_first_weekday=days[0].weekday(),
+        course_hours=course_hours,
         week_quota=WeekQuota(
             hours=_as_float(quota.get("hours")),
             target_min=_as_float(quota.get("targetMin")),
