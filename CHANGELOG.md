@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/lukislp/studylife-display/compare/v1.4.0...v1.4.1) (2026-09-19)
+
+
+### Bug Fixes
+
+* **tests:** freeze the clock in test_run_honours_a_rotation_changed_in_the_web_interface ([#14](https://github.com/lukislp/studylife-display/issues/14)) ([c58e819](https://github.com/lukislp/studylife-display/commit/c58e819f3f410e00a2436520168c3ca6deab2004))
+
 # [1.4.0](https://github.com/lukislp/studylife-display/compare/v1.3.0...v1.4.0) (2026-09-17)
 
 
