@@ -821,6 +821,7 @@ class TestSettingsPage:
         client: Client,
         settings: Settings,
         cached: Path,
+        fixed_now: datetime,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("STUDYLIFE_BASE_URL", BASE_URL)
@@ -839,6 +840,20 @@ class TestSettingsPage:
             return real_render(data, language, layout)
 
         monkeypatch.setattr(main_module, "render", spy)
+
+        # run() compares the cached snapshot's age against real wall-clock time
+        # (datetime.now(tz)), not the frozen `fixed_now` the cached fixture stamps the
+        # snapshot with - left unpatched, that gap grows every day this suite runs after
+        # FIXED_NOW and eventually crosses display_stale_error_hours, diverting to the
+        # stale-error screen instead of the normal render path this test exercises (seen
+        # then stays empty and seen[-1] below raises IndexError). Freeze it a few minutes
+        # after fixed_now, matching the cached fixture's own timestamp.
+        class _FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz: Any = None) -> datetime:
+                return fixed_now + timedelta(minutes=5)
+
+        monkeypatch.setattr(main_module, "datetime", _FrozenDatetime)
 
         client.login()
         form = {"language": "de", "rotate": "180", "quiet_hours": "", "clear_at": ""}
