@@ -1,3 +1,10 @@
+## [1.4.2](https://github.com/lukislp/studylife-display/compare/v1.4.1...v1.4.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* **ci:** add Harden Runner in audit mode to every job ([#18](https://github.com/lukislp/studylife-display/issues/18)) ([9974ac2](https://github.com/lukislp/studylife-display/commit/9974ac2502d6e2313951e8260733c8b112f23aac))
+
 ## [1.4.1](https://github.com/lukislp/studylife-display/compare/v1.4.0...v1.4.1) (2026-09-19)
 
 
