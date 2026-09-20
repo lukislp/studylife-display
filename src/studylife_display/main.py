@@ -17,7 +17,9 @@ from PIL import Image
 
 from studylife_display import package_version
 from studylife_display.config import Settings
+from studylife_display.connect import local_hostname, setup_connect_url
 from studylife_display.credentials import ENV_FILE, apply_pending_credentials
+from studylife_display.current_frame import DASHBOARD, ERROR, SETUP, save_current_frame
 from studylife_display.daily_clear import (
     clear_due,
     load_last_clear,
@@ -27,6 +29,7 @@ from studylife_display.daily_clear import (
 from studylife_display.driver import Display, FileDisplay, WaveshareDisplay
 from studylife_display.layouts.auto import resolve_layout
 from studylife_display.layouts.error import format_age, render_error
+from studylife_display.layouts.setup import render_setup
 from studylife_display.model import DashboardData, build_dashboard
 from studylife_display.panel_lock import PanelLockTimeout, panel_lock
 from studylife_display.quiet_hours import in_quiet_hours, quiet_hours_end
@@ -125,9 +128,14 @@ def _put_on_panel(
     image: Image.Image,
     output_override: str | None,
     clear_first: bool,
+    *,
+    kind: str,
+    layout: str | None = None,
 ) -> bool:
     """Shows `image` under the panel lock and records the moment; False when another
-    refresh held the lock for too long (nothing was drawn then)."""
+    refresh held the lock for too long (nothing was drawn then). A frame that went to the
+    panel (not to a `preview` PNG) is also kept as current.png/current.json in the state
+    directory for the web interface, upright, tagged with `kind` and `layout`."""
     display = make_display(settings, output_override)
     try:
         with panel_lock(state_dir):
@@ -140,6 +148,11 @@ def _put_on_panel(
             save_last_clear(state_dir, now)
         except OSError as exc:
             log.warning("could not record the clear in %s: %s", state_dir, exc)
+    if output_override is None:
+        try:
+            save_current_frame(state_dir, image, now, layout, kind)
+        except OSError as exc:
+            log.warning("could not keep a copy of the frame in %s: %s", state_dir, exc)
     _record(state_dir, tz, last_panel_update_at=now)
     return True
 
@@ -156,7 +169,25 @@ def _show_error(
     clear_first: bool,
 ) -> bool:
     image = render_error(kind, detail, settings.display_language, now, last_error)
-    return _put_on_panel(settings, state_dir, tz, now, image, output_override, clear_first)
+    return _put_on_panel(
+        settings, state_dir, tz, now, image, output_override, clear_first, kind=ERROR
+    )
+
+
+def _show_setup(
+    settings: Settings,
+    state_dir: Path,
+    tz: ZoneInfo,
+    now: datetime,
+    output_override: str | None,
+    clear_first: bool,
+) -> bool:
+    url = setup_connect_url(settings)
+    log.info("no API key configured yet - showing the setup screen (%s)", url)
+    image = render_setup(url, settings.display_language, local_hostname(), now)
+    return _put_on_panel(
+        settings, state_dir, tz, now, image, output_override, clear_first, kind=SETUP
+    )
 
 
 def refresh_panel(
@@ -166,6 +197,10 @@ def refresh_panel(
     clear_first: bool = False,
 ) -> int:
     """Fetch -> build -> resolve layout -> render -> show, under the panel lock.
+
+    With no API key configured at all (a fresh install), nothing is fetched: the setup screen
+    with the connect URL and its QR code goes on the panel and the exit code is 0 - a panel
+    that is not set up yet is not a failure. A key that IS configured but rejected is one.
 
     What goes on the panel when the fetch fails: a 401/403 means the key is rejected and the
     "rejected" screen is shown right away (exit 1) - a cached dashboard would only hide the
@@ -181,6 +216,10 @@ def refresh_panel(
     state_path = Path(settings.display_state_path)
     state_dir = state_path.parent
     language = settings.display_language
+
+    if not settings.studylife_api_key:
+        shown = _show_setup(settings, state_dir, tz, now, output_override, clear_first)
+        return 0 if shown else 1
 
     snapshot: Snapshot | None
     try:
@@ -273,7 +312,17 @@ def refresh_panel(
     choice = layout_choice if layout_choice is not None else load_layout_choice(settings)
     layout = resolve_layout(choice, data)
     image = render(data, language, layout)
-    if not _put_on_panel(settings, state_dir, tz, now, image, output_override, clear_first):
+    if not _put_on_panel(
+        settings,
+        state_dir,
+        tz,
+        now,
+        image,
+        output_override,
+        clear_first,
+        kind=DASHBOARD,
+        layout=layout,
+    ):
         return 1
     log.info(
         "shown %s (%s): today %.2f h, streak %d, stale %d min",
@@ -312,7 +361,8 @@ def command_preview(
     settings: Settings, output: str, use_sample: bool, layout_choice: str | None
 ) -> int:
     """Renders to a PNG regardless of DISPLAY_DRIVER. With --sample no API is contacted and
-    no lock is taken (a PNG somewhere else does not contend with the panel)."""
+    no lock is taken (a PNG somewhere else does not contend with the panel). Neither mode
+    touches current.png: only frames that reach the panel count as shown."""
     if not use_sample:
         return refresh_panel(settings, layout_choice, output_override=output)
     tz = zone(settings.studylife_timezone)

@@ -10,6 +10,8 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "pillow>=11.0",
+    # QR code on the first-run setup screen; pure Python, drawn module by module into the frame.
+    "segno>=1.6",
     # zoneinfo needs a tz database; Linux has /usr/share/zoneinfo, Windows does not.
     "tzdata>=2024.1; sys_platform == 'win32'",
 ]

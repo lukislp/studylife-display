@@ -164,6 +164,9 @@ STUDYLIFE_TIMEZONE=Europe/Berlin
 # Optional https URL of this web interface (a Tailscale name, say): StudyLife then
 # redirects straight back to <url>/connect/callback when connecting the account.
 # DISPLAY_PUBLIC_BASE_URL=
+# Optional exact URL for the setup screen's QR code; empty derives it from the hostname
+# (http://<hostname>.local:8795/connect) or from DISPLAY_PUBLIC_BASE_URL.
+# DISPLAY_SETUP_URL=
 # Copy of the layout choice on the boot partition, restored at boot so that it survives the
 # overlay filesystem. Empty disables it.
 # DISPLAY_PERSIST_PATH=/boot/firmware/studylife-display/settings.json
@@ -229,7 +232,8 @@ cat <<EOF
 Installed. Next steps:
   1. sudo nano $ENV_FILE            # STUDYLIFE_BASE_URL
   2. sudo systemctl restart studylife-display-web.service
-  3. http://$(hostname).local:8795/connect   # connect the account (no key to copy)
+  3. http://$(hostname).local:8795/connect   # connect the account (no key to copy);
+     the panel shows this URL as a QR code until a key is applied
      or put the key into $ENV_FILE by hand and run
      sudo systemctl start studylife-display.service
   4. journalctl -u studylife-display.service -n 50

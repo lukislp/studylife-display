@@ -8,6 +8,7 @@ The fill levels use explicit pixel patterns for the same reason.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib import resources
 from typing import Literal
@@ -222,6 +223,19 @@ def draw_text(
             draw.text((x, y), char, font=font, fill=fill, anchor=anchor)
             x += font.getlength(char)
     return x
+
+
+def font_fitting(
+    text: str, sizes: Sequence[int], max_width: float, name: str = "IBMPlexSans-Bold.ttf"
+) -> ImageFont.FreeTypeFont:
+    """The largest of `sizes` (tried in the given order) at which `text` fits into
+    `max_width`; the last size when none does, for the caller to ellipsize at."""
+    font = _font(name, sizes[0])
+    for size in sizes:
+        font = _font(name, size)
+        if text_width(text, font) <= max_width:
+            break
+    return font
 
 
 def ellipsize(text: str, font: ImageFont.FreeTypeFont, max_width: float) -> str:

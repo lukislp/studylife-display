@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import secrets
+import socket
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -45,10 +46,14 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
 
+from studylife_display.config import Settings, parse_bind
+
 log = logging.getLogger(__name__)
 
 CLIENT_ID = "studylife-display"
 CALLBACK_PATH = "/connect/callback"
+# The web interface's connect page, which the first-run setup screen points at.
+CONNECT_PATH = "/connect"
 PENDING_FILE = "credentials.pending.json"
 STATE_LIFETIME = timedelta(minutes=10)
 # Generous on purpose: the exchange happens once per connection and a slow instance should
@@ -112,6 +117,29 @@ def public_redirect_uri(public_base_url: str) -> str:
     """Redirect mode: the exact string to register on the client - the server matches it
     character for character."""
     return f"{normalise_instance(public_base_url)}{CALLBACK_PATH}"
+
+
+def local_hostname() -> str:
+    """The machine's hostname as mDNS advertises it, without a trailing `.local` (some
+    images report the full name), so that `<hostname>.local` never doubles the suffix."""
+    name = socket.gethostname().strip()
+    if name.lower().endswith(".local"):
+        name = name[: -len(".local")]
+    return name or "raspberrypi"
+
+
+def setup_connect_url(settings: Settings, hostname: str | None = None) -> str:
+    """Where the setup screen (and the layouts page, while no key is stored) sends the person
+    to connect the account: DISPLAY_SETUP_URL verbatim when set; else the connect page under
+    DISPLAY_PUBLIC_BASE_URL; else the mDNS name and the web interface's port,
+    `http://<hostname>.local:<port>/connect`. `hostname` overrides the lookup (tests)."""
+    if settings.display_setup_url:
+        return settings.display_setup_url
+    if settings.display_public_base_url:
+        return f"{normalise_instance(settings.display_public_base_url)}{CONNECT_PATH}"
+    host = local_hostname() if hostname is None else hostname
+    port = parse_bind(settings.display_web_bind)[1]
+    return f"http://{host}.local:{port}{CONNECT_PATH}"
 
 
 # -- one attempt -------------------------------------------------------------------------
