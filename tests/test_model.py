@@ -2,7 +2,12 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from studylife_display.model import HEATMAP_COLUMNS, HEATMAP_ROWS, build_dashboard
+from studylife_display.model import (
+    HEATMAP_COLUMNS,
+    HEATMAP_ROWS,
+    WeeklyReport,
+    build_dashboard,
+)
 from studylife_display.times import day_bounds, parse_local
 
 
@@ -109,7 +114,7 @@ class TestMetrics:
     def test_reads_streak_week_quota_and_program(
         self, tz: ZoneInfo, fixed_now: datetime, sample: Any
     ) -> None:
-        metrics, history, timer = sample
+        metrics, history, timer, sessions = sample
         data = build_dashboard(metrics, history, timer, fixed_now, tz)
         assert data.streak_days == 12
         assert data.week_hours == 12.5
@@ -138,6 +143,77 @@ class TestTimer:
     def test_not_running_is_none(self, tz: ZoneInfo, fixed_now: datetime) -> None:
         assert build_dashboard({}, [], {"isRunning": False}, fixed_now, tz).timer is None
         assert build_dashboard({}, [], {}, fixed_now, tz).timer is None
+
+
+class TestWeeklyReport:
+    def test_server_report_is_read(self, tz: ZoneInfo, fixed_now: datetime, sample: Any) -> None:
+        metrics, history, timer, _ = sample
+        data = build_dashboard(metrics, history, timer, fixed_now, tz)
+        assert data.weekly_report == WeeklyReport("2026-W37", 12.5, 2.5, "Betriebssysteme", 7)
+
+    def test_missing_report_is_zeros(self, tz: ZoneInfo, fixed_now: datetime) -> None:
+        data = build_dashboard({"weeklyReport": {"hours": "x"}}, [], {}, fixed_now, tz)
+        assert data.weekly_report == WeeklyReport("", 0.0, 0.0, None, 0)
+
+    def test_this_week_is_summed_from_the_history(self, tz: ZoneInfo, fixed_now: datetime) -> None:
+        # FIXED_NOW is Thursday 2026-09-17; the week runs Mon 14th to Sun 20th.
+        history = [
+            {**session("2026-09-14T09:00:00", "2026-09-14T10:00:00"), "courseName": "A"},
+            {**session("2026-09-17T09:00:00", "2026-09-17T11:30:00"), "courseName": "B"},
+            {**session("2026-09-13T09:00:00", "2026-09-13T10:00:00"), "courseName": "A"},  # Sun
+            {**session("2026-09-07T09:00:00", "2026-09-07T12:00:00"), "courseName": "A"},  # last
+        ]
+        data = build_dashboard({}, history, {}, fixed_now, tz)
+        assert data.week_strip == (1.0, 0.0, 0.0, 2.5, 0.0, 0.0, 0.0)
+        assert data.this_week == WeeklyReport("2026-W38", 3.5, 3.5 - 4.0, "B", 2)
+
+    def test_this_week_without_sessions(self, tz: ZoneInfo, fixed_now: datetime) -> None:
+        data = build_dashboard({}, [], {}, fixed_now, tz)
+        assert data.this_week == WeeklyReport("2026-W38", 0.0, 0.0, None, 0)
+        assert data.week_strip == (0.0,) * 7
+
+    def test_week_id_follows_the_iso_week_of_now(self, tz: ZoneInfo) -> None:
+        sunday = datetime(2026, 9, 20, 22, 0, tzinfo=tz)
+        assert build_dashboard({}, [], {}, sunday, tz).this_week.week_id == "2026-W38"
+        monday = datetime(2026, 9, 21, 0, 30, tzinfo=tz)
+        assert build_dashboard({}, [], {}, monday, tz).this_week.week_id == "2026-W39"
+
+
+class TestAgenda:
+    def planned(self, start: str, end: str, **extra: Any) -> dict[str, Any]:
+        item = {"courseName": "Algebra", "startTime": start, "endTime": end, "isCompleted": False}
+        item.update(extra)
+        return item
+
+    def test_todays_sessions_sorted_by_start(self, tz: ZoneInfo, fixed_now: datetime) -> None:
+        sessions = [
+            self.planned("2026-09-17T18:00:00", "2026-09-17T19:00:00", topic="Later"),
+            self.planned("2026-09-17T08:00:00", "2026-09-17T09:30:00", isCompleted=True),
+            self.planned("2026-09-18T08:00:00", "2026-09-18T09:00:00"),  # tomorrow
+            self.planned("2026-09-16T23:00:00", "2026-09-17T00:30:00"),  # started yesterday
+            self.planned("2026-09-17T16:30:00", "2026-09-17T17:00:00", courseName=None),
+            self.planned("2026-09-17T12:00:00", None),
+            self.planned("2026-09-17T12:00:00", "2026-09-17T11:00:00"),
+        ]
+        data = build_dashboard({}, [], {}, fixed_now, tz, sessions=sessions)
+        assert [item.start.hour for item in data.agenda] == [8, 16, 18]
+        first, running, later = data.agenda
+        assert first.is_completed and not first.is_running_now and first.topic is None
+        assert running.is_running_now and running.course_name == ""
+        assert later.topic == "Later" and not later.is_running_now
+        assert data.next_agenda_item is running
+
+    def test_no_sessions_means_no_agenda(self, tz: ZoneInfo, fixed_now: datetime) -> None:
+        assert build_dashboard({}, [], {}, fixed_now, tz).agenda == ()
+        assert build_dashboard({}, [], {}, fixed_now, tz, sessions=[]).next_agenda_item is None
+
+    def test_today_is_the_servers_day_and_now_is_stored_in_its_zone(self, tz: ZoneInfo) -> None:
+        # 22:30 UTC on the 16th is 00:30 on the 17th in Berlin.
+        now_utc = datetime(2026, 9, 16, 22, 30, tzinfo=ZoneInfo("UTC"))
+        sessions = [self.planned("2026-09-17T09:00:00", "2026-09-17T10:00:00")]
+        data = build_dashboard({}, [], {}, now_utc, tz, sessions=sessions)
+        assert len(data.agenda) == 1
+        assert data.now.tzinfo is tz and data.now.hour == 0
 
 
 class TestStaleness:

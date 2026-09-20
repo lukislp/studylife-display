@@ -20,6 +20,8 @@ def test_defaults(env: None) -> None:
     assert settings.display_quiet_hours == ""
     assert settings.display_clear_at == "04:00"
     assert settings.display_update_check is False
+    assert settings.display_auto_review == "sun 18-24"
+    assert settings.display_auto_agenda == "06-12"
 
 
 @pytest.mark.parametrize("value", ["0", "180"])
@@ -74,6 +76,27 @@ def test_stale_hours_must_be_positive(
     env: None, monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
     monkeypatch.setenv("DISPLAY_STALE_ERROR_HOURS", value)
+    with pytest.raises(ValidationError):
+        Settings()  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("value", ["sun 18-24", "sat,sun 17:30-22", "", "mon-fri 6-9"])
+def test_auto_windows_accept_the_rule_notation_and_off(
+    env: None, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("DISPLAY_AUTO_REVIEW", value)
+    monkeypatch.setenv("DISPLAY_AUTO_AGENDA", value)
+    settings = Settings()  # type: ignore[call-arg]
+    assert settings.display_auto_review == value
+    assert settings.display_auto_agenda == value
+
+
+@pytest.mark.parametrize("field", ["DISPLAY_AUTO_REVIEW", "DISPLAY_AUTO_AGENDA"])
+@pytest.mark.parametrize("value", ["sun", "23-7", "sun 18-18", "someday 18-20", "18-25"])
+def test_auto_windows_reject_garbage(
+    env: None, monkeypatch: pytest.MonkeyPatch, field: str, value: str
+) -> None:
+    monkeypatch.setenv(field, value)
     with pytest.raises(ValidationError):
         Settings()  # type: ignore[call-arg]
 

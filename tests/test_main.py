@@ -59,8 +59,13 @@ def error_screens(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     return seen
 
 
-def mock_api(sample: tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]) -> None:
-    metrics, history, timer = sample
+SESSIONS_ETAG = '"abc123"'
+
+
+def mock_api(
+    sample: tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]],
+) -> None:
+    metrics, history, timer, sessions = sample
     respx.get(f"{BASE_URL}/api/metrics/summary").mock(
         return_value=httpx.Response(200, json=metrics)
     )
@@ -68,6 +73,9 @@ def mock_api(sample: tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]
         return_value=httpx.Response(200, json=history)
     )
     respx.get(f"{BASE_URL}/api/timerstate").mock(return_value=httpx.Response(200, json=timer))
+    respx.get(f"{BASE_URL}/api/sessions").mock(
+        return_value=httpx.Response(200, json=sessions, headers={"ETag": SESSIONS_ETAG})
+    )
 
 
 @respx.mock
@@ -78,21 +86,81 @@ def test_run_fetches_renders_and_caches(
     assert main(["run"]) == 0
     assert env["frame"].exists()
     cached = json.loads(env["state"].read_text(encoding="utf-8"))
-    assert set(cached) == {"fetched_at", "metrics", "history", "timer"}
+    assert set(cached) == {
+        "fetched_at",
+        "metrics",
+        "history",
+        "timer",
+        "sessions",
+        "sessions_etag",
+    }
     assert cached["metrics"] == sample[0]
+    assert cached["sessions"] == sample[3]
+    assert cached["sessions_etag"] == SESSIONS_ETAG
     assert rendered[0].stale_minutes == 0
     assert rendered[0].streak_days == 12
     history_call = respx.get(f"{BASE_URL}/api/sessions/history").calls.last
     assert history_call.request.headers["X-Api-Key"] == "test-key"
     assert history_call.request.url.params["days"] == "28"
     assert history_call.request.url.params["onlyCompleted"] == "true"
+    sessions_call = respx.get(f"{BASE_URL}/api/sessions").calls.last
+    assert "if-none-match" not in sessions_call.request.headers  # nothing cached yet
+    assert not sessions_call.request.url.params
+    status = json.loads((env["state"].parent / "status.json").read_text(encoding="utf-8"))
+    assert status["sessions_ok"] is True and status["sessions_error"] is None
+
+
+@respx.mock
+def test_run_sends_the_cached_etag_and_keeps_the_sessions_on_304(
+    env: dict[str, Path], sample: Any, rendered: list[DashboardData]
+) -> None:
+    mock_api(sample)
+    assert main(["run"]) == 0
+    route = respx.get(f"{BASE_URL}/api/sessions").mock(
+        return_value=httpx.Response(304, headers={"ETag": SESSIONS_ETAG})
+    )
+    assert main(["run"]) == 0
+    assert route.calls.last.request.headers["If-None-Match"] == SESSIONS_ETAG
+    cached = json.loads(env["state"].read_text(encoding="utf-8"))
+    assert cached["sessions"] == sample[3]  # kept from the first fetch
+    assert cached["sessions_etag"] == SESSIONS_ETAG
+    # A changed list arrives with a new tag, which is then what gets sent.
+    route.mock(return_value=httpx.Response(200, json=[], headers={"ETag": '"def456"'}))
+    assert main(["run"]) == 0
+    assert route.calls.last.request.headers["If-None-Match"] == SESSIONS_ETAG
+    assert json.loads(env["state"].read_text(encoding="utf-8"))["sessions_etag"] == '"def456"'
+    assert rendered[-1].agenda == ()
+    assert json.loads(env["state"].read_text(encoding="utf-8"))["sessions"] == []
+
+
+@respx.mock
+@pytest.mark.parametrize("failure", ["403", "500", "network"])
+def test_a_failed_sessions_call_does_not_break_the_dashboard(
+    env: dict[str, Path], sample: Any, rendered: list[DashboardData], failure: str
+) -> None:
+    mock_api(sample)
+    route = respx.get(f"{BASE_URL}/api/sessions")
+    if failure == "network":
+        route.mock(side_effect=httpx.ConnectError("down"))
+    else:
+        route.mock(return_value=httpx.Response(int(failure), text="no scope"))
+    assert main(["run"]) == 0
+    assert env["frame"].exists()
+    assert rendered[0].agenda == ()
+    assert rendered[0].streak_days == 12
+    cached = json.loads(env["state"].read_text(encoding="utf-8"))
+    assert cached["sessions"] == [] and cached["sessions_etag"] is None
+    status = json.loads((env["state"].parent / "status.json").read_text(encoding="utf-8"))
+    assert status["last_fetch_ok"] is True and status["last_error"] is None
+    assert status["sessions_ok"] is False
+    assert status["sessions_error"]
 
 
 @respx.mock
 def test_run_falls_back_to_the_cache_with_a_stale_marker(
     env: dict[str, Path], sample: Any, rendered: list[DashboardData], tz: ZoneInfo
 ) -> None:
-    metrics, history, timer = sample
+    metrics, history, timer, sessions = sample
     fetched = datetime.now(tz) - timedelta(minutes=31)
     save_snapshot(env["state"], Snapshot(metrics, history, timer, fetched))
     respx.get(f"{BASE_URL}/api/metrics/summary").mock(side_effect=httpx.ConnectError("down"))
@@ -113,7 +181,7 @@ def test_run_shows_the_rejected_screen_on_401_and_403_even_with_a_cache(
     tz: ZoneInfo,
     status: int,
 ) -> None:
-    metrics, history, timer = sample
+    metrics, history, timer, sessions = sample
     save_snapshot(env["state"], Snapshot(metrics, history, timer, datetime.now(tz)))
     respx.get(f"{BASE_URL}/api/metrics/summary").mock(
         return_value=httpx.Response(status, text="no scope")
@@ -153,7 +221,7 @@ def test_run_shows_the_stale_screen_once_the_cache_is_too_old(
     tz: ZoneInfo,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    metrics, history, timer = sample
+    metrics, history, timer, sessions = sample
     monkeypatch.setenv("DISPLAY_STALE_ERROR_HOURS", "2")
     respx.get(f"{BASE_URL}/api/metrics/summary").mock(side_effect=httpx.ConnectError("down"))
 
@@ -185,13 +253,7 @@ def test_a_successful_fetch_clears_the_last_error(
 ) -> None:
     respx.get(f"{BASE_URL}/api/metrics/summary").mock(side_effect=httpx.ConnectError("down"))
     assert main(["run"]) == 1
-    respx.get(f"{BASE_URL}/api/metrics/summary").mock(
-        return_value=httpx.Response(200, json=sample[0])
-    )
-    respx.get(f"{BASE_URL}/api/sessions/history").mock(
-        return_value=httpx.Response(200, json=sample[1])
-    )
-    respx.get(f"{BASE_URL}/api/timerstate").mock(return_value=httpx.Response(200, json=sample[2]))
+    mock_api(sample)
     assert main(["run"]) == 0
     recorded = json.loads((env["state"].parent / "status.json").read_text(encoding="utf-8"))
     assert recorded["last_fetch_ok"] is True
@@ -209,6 +271,12 @@ def test_check_prints_what_it_got(
     assert report["streak_days"] == 12
     assert report["next_goal"]["course_name"] == "Betriebssysteme"
     assert len(report["heatmap"]) == 4
+    # `check` runs at the real clock, the sample sessions sit on FIXED_NOW's day: the raw
+    # count is stable, the agenda is not.
+    assert report["sessions"] == 4 and report["sessions_ok"] is True
+    assert isinstance(report["agenda"], list)
+    assert report["weekly_report"]["session_count"] == 7
+    assert report["this_week"]["week_id"]
     assert not env["frame"].exists()
 
 
@@ -239,11 +307,17 @@ def test_preview_forces_the_file_driver(
 def test_snapshot_round_trip(
     tmp_path: Path, sample: Any, tz: ZoneInfo, fixed_now: datetime
 ) -> None:
-    metrics, history, timer = sample
+    metrics, history, timer, sessions = sample
     path = tmp_path / "a" / "b" / "last.json"
-    save_snapshot(path, Snapshot(metrics, history, timer, fixed_now))
+    save_snapshot(path, Snapshot(metrics, history, timer, fixed_now, sessions, '"tag"'))
     loaded = load_snapshot(path, tz)
-    assert loaded == Snapshot(metrics, history, timer, fixed_now)
+    assert loaded == Snapshot(metrics, history, timer, fixed_now, sessions, '"tag"')
+    # A cache written before the session list existed still loads.
+    old = {"fetched_at": fixed_now.isoformat(), "metrics": metrics, "history": [], "timer": {}}
+    path.write_text(json.dumps(old), encoding="utf-8")
+    loaded = load_snapshot(path, tz)
+    assert loaded is not None
+    assert loaded.sessions == [] and loaded.sessions_etag is None
 
 
 def test_load_snapshot_tolerates_garbage(tmp_path: Path, tz: ZoneInfo) -> None:

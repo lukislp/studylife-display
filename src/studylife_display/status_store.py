@@ -52,6 +52,11 @@ class Status:
     last_error: LastError | None = None
     # When a frame (dashboard or error screen) was last put on the panel.
     last_panel_update_at: datetime | None = None
+    # The optional fourth payload (the session list for the agenda layout): whether the last
+    # successful fetch got it, and the error when it did not. A key without the
+    # Sessions.GetAll scope shows up here, not as a rejected key.
+    sessions_ok: bool = True
+    sessions_error: str | None = None
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -59,6 +64,8 @@ class Status:
             "last_fetch_at": _iso(self.last_fetch_at),
             "last_error": None if self.last_error is None else self.last_error.as_json(),
             "last_panel_update_at": _iso(self.last_panel_update_at),
+            "sessions_ok": self.sessions_ok,
+            "sessions_error": self.sessions_error,
         }
 
 
@@ -107,6 +114,8 @@ def load_status(state_dir: Path, tz: ZoneInfo) -> Status:
         last_fetch_at=_moment(raw.get("last_fetch_at"), tz),
         last_error=error,
         last_panel_update_at=_moment(raw.get("last_panel_update_at"), tz),
+        sessions_ok=bool(raw.get("sessions_ok", True)),
+        sessions_error=str(raw["sessions_error"]) if raw.get("sessions_error") else None,
     )
 
 

@@ -92,6 +92,10 @@ def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
         "display_state_path": str(tmp_path / "state" / "last.json"),
         "display_web_token": TOKEN,
         "display_layout": "auto",
+        # The pages resolve "auto" at the real clock; without this the layout the tests
+        # expect ("focus", the sample's running timer) would flip to "review" on Sunday
+        # evenings. The review rule itself is covered in test_auto.py.
+        "display_auto_review": "",
     }
     values.update(overrides)
     return Settings(**values)
@@ -148,7 +152,7 @@ def client(server: DisplayServer) -> Client:
 
 @pytest.fixture
 def cached(settings: Settings, sample: Any, tz: ZoneInfo, fixed_now: datetime) -> Path:
-    metrics, history, timer = sample
+    metrics, history, timer, sessions = sample
     path = Path(settings.display_state_path)
     save_snapshot(path, Snapshot(metrics, history, timer, fixed_now))
     return path
@@ -196,7 +200,9 @@ class TestPreviews:
         status, _, _ = client.request("GET", "/preview/exam.png")
         assert status == 403
 
-    @pytest.mark.parametrize("key", ["auto", "classic", "focus", "exam", "week", "semester"])
+    @pytest.mark.parametrize(
+        "key", ["auto", "classic", "focus", "exam", "week", "semester", "agenda", "review"]
+    )
     def test_preview_is_an_800x480_png(self, client: Client, key: str) -> None:
         client.login()
         status, headers, body = client.request("GET", f"/preview/{key}.png")
@@ -325,7 +331,7 @@ class TestServeCommand:
 def fresh_cache(settings: Settings, sample: Any, tz: ZoneInfo, ok: bool = True) -> datetime:
     """A snapshot fetched just now plus a matching status.json; returns the moment."""
     now = datetime.now(tz)
-    metrics, history, timer = sample
+    metrics, history, timer, sessions = sample
     path = Path(settings.display_state_path)
     save_snapshot(path, Snapshot(metrics, history, timer, now))
     save_status(path.parent, Status(last_fetch_ok=ok, last_fetch_at=now, last_panel_update_at=now))
@@ -388,7 +394,8 @@ class TestHealth:
         assert report["last_fetch_at"] == now.isoformat()
         assert report["last_panel_update_at"] == now.isoformat()
         assert report["stale_minutes"] == 0
-        assert report["layout"] in {"classic", "focus", "exam", "week"}
+        assert report["layout"] in {"classic", "focus", "exam", "week", "agenda"}
+        assert report["sessions_ok"] is True
 
     def test_failed_fetch_with_a_cache_is_degraded(
         self, client: Client, settings: Settings, sample: Any, tz: ZoneInfo
@@ -439,7 +446,7 @@ class TestHealth:
             now = datetime.now(tz)
             overrides = {"display_quiet_hours": quiet_hours_around(now)} if quiet else {}
             settings = make_settings(tmp_path / expected, **overrides)
-            metrics, history, timer = sample
+            metrics, history, timer, sessions = sample
             path = Path(settings.display_state_path)
             old = now - timedelta(minutes=40)
             save_snapshot(path, Snapshot(metrics, history, timer, old))
@@ -765,7 +772,7 @@ class TestSettingsPage:
         assert b"<option value='de' selected>" in body
         assert b"<option value='0' selected>" in body
         assert b"value='04:00'" in body
-        assert body.count(b"aus Umgebung/Standard") == 5
+        assert body.count(b"aus Umgebung/Standard") == 7
         assert b"studylife-display.timer" in body
         assert b"STUDYLIFE_BASE_URL" in body and BASE_URL.encode() in body
         assert b"STUDYLIFE_API_KEY" in body and b"gesetzt" in body
@@ -784,6 +791,8 @@ class TestSettingsPage:
             "quiet_hours": "23-7",
             "clear_at": "05:30",
             "update_check": "on",
+            "auto_review": "sat,sun 19-23",
+            "auto_agenda": "",
         }
         status, headers, _ = client.request("POST", "/settings", form, headers=client.same_origin())
         assert status == 303
@@ -795,6 +804,8 @@ class TestSettingsPage:
             "quiet_hours": "23-7",
             "clear_at": "05:30",
             "update_check": True,
+            "auto_review": "sat,sun 19-23",
+            "auto_agenda": "",
         }
         effective = effective_settings(settings)
         assert effective.display_language == "en"
@@ -802,13 +813,18 @@ class TestSettingsPage:
         assert effective.display_quiet_hours == "23-7"
         assert effective.display_clear_at == "05:30"
         assert effective.display_update_check is True
+        assert effective.display_auto_review == "sat,sun 19-23"
+        assert effective.display_auto_agenda == ""
         assert settings.display_language == "de"  # the environment object is untouched
         _, _, body = client.request("GET", "/settings?m=saved")
         assert b"Settings saved." in body
-        assert body.count(b"from settings.json") == 5
+        assert body.count(b"from settings.json") == 7
+        assert b"value='sat,sun 19-23'" in body
         assert b"<option value='180' selected>" in body
         _, _, body = client.request("GET", "/")
         assert b"Sign out" in body  # the layouts page follows the new language at once
+        assert b"inside the window sat,sun 19-23" in body  # the auto hint shows the windows
+        assert b"inside the window off" in body
 
         # The layout choice shares the file and survives the settings write.
         client.request("POST", "/layout", {"layout": "week"}, headers=client.same_origin())
@@ -825,13 +841,21 @@ class TestSettingsPage:
         self, client: Client, settings: Settings
     ) -> None:
         client.login()
-        form = {"language": "de", "rotate": "90", "quiet_hours": "night", "clear_at": "25:00"}
+        form = {
+            "language": "de",
+            "rotate": "90",
+            "quiet_hours": "night",
+            "clear_at": "25:00",
+            "auto_review": "sun 23-7",
+            "auto_agenda": "06-12",
+        }
         status, _, body = client.request("POST", "/settings", form, headers=client.same_origin())
         assert status == 400
         text = body.decode()
         assert "Bitte die markierten Felder korrigieren" in text
-        assert text.count("class='error'") == 3
+        assert text.count("class='error'") == 4
         assert "value='night'" in text and "value='25:00'" in text  # what was typed stays
+        assert "value='sun 23-7'" in text
         assert not (Path(settings.display_state_path).parent / "settings.json").exists()
         form["rotate"] = "upside-down"
         status, _, _ = client.request("POST", "/settings", form, headers=client.same_origin())
@@ -936,7 +960,7 @@ class TestCurrentFrame:
     ) -> None:
         # A snapshot stamped now (not the frozen fixture date, which ages past the stale
         # limit), so the offline refresh draws the cached dashboard, not the stale screen.
-        metrics, history, timer = sample
+        metrics, history, timer, sessions = sample
         save_snapshot(
             Path(settings.display_state_path), Snapshot(metrics, history, timer, datetime.now(tz))
         )

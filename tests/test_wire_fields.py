@@ -60,8 +60,11 @@ VERIFIED: dict[str, frozenset[str]] = {
             "upcomingCourseGoals[].targetDate",
             "upcomingCourseGoals[].daysLeft",
             "weeklyReport",
+            "weeklyReport.weekId",
             "weeklyReport.hours",
+            "weeklyReport.deltaVsPreviousWeek",
             "weeklyReport.topCourseName",
+            "weeklyReport.sessionCount",
             "asOf",
         }
     ),
@@ -90,6 +93,23 @@ VERIFIED: dict[str, frozenset[str]] = {
             "serverNow",
         }
     ),
+    # GET /api/sessions: StudySessionDto, the same shape as the history plus notes and the
+    # recurrence group.
+    "sessions": frozenset(
+        {
+            "[].id",
+            "[].courseId",
+            "[].courseName",
+            "[].courseColor",
+            "[].startTime",
+            "[].endTime",
+            "[].topic",
+            "[].notes",
+            "[].isCompleted",
+            "[].timerModeId",
+            "[].recurrenceGroupId",
+        }
+    ),
 }
 
 # Fields that do NOT exist and must never appear in USED_FIELDS (they were plausible enough
@@ -102,6 +122,12 @@ FORBIDDEN = {
     "forecast.graduationDate",
     "neglectedCourse.name",
     "topics.done",
+    "weeklyReport.delta",
+    "weeklyReport.sessions",
+    "[].title",
+    "[].completed",
+    "[].start",
+    "[].end",
 }
 
 
@@ -145,28 +171,38 @@ def test_used_fields_contain_no_invented_names() -> None:
 
 
 def test_build_dashboard_reads_exactly_used_fields(
-    sample: tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]],
+    sample: tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]],
     fixed_now: datetime,
     tz: ZoneInfo,
 ) -> None:
-    metrics, history, timer = sample
-    logs: dict[str, set[str]] = {"metrics": set(), "history": set(), "timer": set()}
+    metrics, history, timer, sessions = sample
+    logs: dict[str, set[str]] = {
+        "metrics": set(),
+        "history": set(),
+        "timer": set(),
+        "sessions": set(),
+    }
     build_dashboard(
         Recorder(metrics, logs["metrics"]),
         [Recorder(item, logs["history"], "[].") for item in history],
         Recorder(timer, logs["timer"]),
         fixed_now,
         tz,
+        sessions=[Recorder(item, logs["sessions"], "[].") for item in sessions],
     )
     for endpoint, read in logs.items():
         assert read == set(USED_FIELDS[endpoint]), endpoint
 
 
+def test_every_endpoint_has_a_used_and_a_verified_list() -> None:
+    assert set(USED_FIELDS) == set(VERIFIED) == {"metrics", "history", "timer", "sessions"}
+
+
 def test_sample_payloads_use_only_verified_names(
-    sample: tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]],
+    sample: tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]],
 ) -> None:
     """The sample data doubles as documentation of the wire format; keep it honest."""
-    metrics, history, timer = sample
+    metrics, history, timer, sessions = sample
 
     def paths(value: Any, prefix: str = "") -> set[str]:
         found: set[str] = set()
@@ -182,3 +218,6 @@ def test_sample_payloads_use_only_verified_names(
     assert paths(metrics) <= VERIFIED["metrics"]
     assert paths(history) <= VERIFIED["history"]
     assert paths(timer) <= VERIFIED["timer"]
+    assert paths(sessions) <= VERIFIED["sessions"]
+    # The sample sessions carry every field the DTO has, so the list above stays complete.
+    assert paths(sessions) == VERIFIED["sessions"]

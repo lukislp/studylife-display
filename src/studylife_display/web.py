@@ -70,7 +70,11 @@ from studylife_display.current_frame import (
     read_current_png,
 )
 from studylife_display.layouts import AUTO, LAYOUTS
-from studylife_display.layouts.auto import EXAM_SOON_DAYS, resolve_layout
+from studylife_display.layouts.auto import (
+    EXAM_SOON_DAYS,
+    resolve_layout,
+    rules_from_settings,
+)
 from studylife_display.layouts.common import TEXT
 from studylife_display.model import DashboardData, build_dashboard
 from studylife_display.quiet_hours import in_quiet_hours, quiet_hours_end
@@ -87,6 +91,7 @@ from studylife_display.settings_store import (
 )
 from studylife_display.snapshot import load_snapshot
 from studylife_display.status_store import REJECTED, load_status
+from studylife_display.studylife_client import SCOPES
 from studylife_display.times import zone
 from studylife_display.update_check import fetch_latest_tag, is_newer, latest_release
 
@@ -123,9 +128,16 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "auto_name": "Automatisch",
         "auto_description": "Wählt bei jeder Aktualisierung das passende Layout.",
         "auto_rules": (
-            "Automatisch heißt: Prüfung, wenn die nächste Prüfung in höchstens {days} Tagen "
-            "ansteht; sonst Fokus, solange ein Timer läuft; sonst Klassisch. Semester wird nie "
-            "automatisch gewählt."
+            "Automatisch heißt, in dieser Reihenfolge: Wochenrückblick im Fenster {review}; "
+            "Prüfung, wenn die nächste Prüfung in höchstens {days} Tagen ansteht; Fokus, solange "
+            "ein Timer läuft; Tagesplan, solange heute noch eine Session bevorsteht, im Fenster "
+            "{agenda}; sonst Klassisch. Semester wird nie automatisch gewählt."
+        ),
+        "auto_off": "aus",
+        "sessions_failed": (
+            "Die Sessions für den Tagesplan konnten nicht geladen werden ({message}). Ein vor "
+            "dem Scope Sessions.GetAll ausgestellter Schlüssel muss neu ausgestellt werden; "
+            "die anderen Layouts sind nicht betroffen."
         ),
         "auto_now": "derzeit: {layout}",
         "last_updated": "Panel zuletzt aktualisiert: {time}",
@@ -155,7 +167,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "connect_intro": (
             "Verbindet dieses Display mit deinem StudyLife-Konto auf {instance}, ohne einen "
             "Schlüssel abzutippen. Der Client „{client}“ muss auf der Instanz registriert sein, "
-            "mit der Redirect-URI {redirect_uri} (siehe README)."
+            "mit den Scopes {scopes} und der Redirect-URI {redirect_uri} (siehe README)."
         ),
         "connect_no_key": "Noch kein Schlüssel hinterlegt.",
         "connect_connected": (
@@ -222,6 +234,16 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         ),
         "settings_clear_at": "Tägliche Reinigung um",
         "settings_clear_at_hint": "HH:MM; leer = aus.",
+        "settings_auto_review": "Automatik: Wochenrückblick im Fenster",
+        "settings_auto_review_hint": (
+            "[Wochentage] HH-HH oder HH:MM-HH:MM, z. B. „sun 18-24“ (24 = Mitternacht, kein "
+            "Übergang über Mitternacht); leer = Regel aus."
+        ),
+        "settings_auto_agenda": "Automatik: Tagesplan im Fenster",
+        "settings_auto_agenda_hint": (
+            "HH-HH oder HH:MM-HH:MM, z. B. „06-12“, optional mit Wochentagen davor; leer = "
+            "Regel aus."
+        ),
         "settings_update_check": "Auf neue Version prüfen (fragt GitHub, alle 6 h)",
         "settings_source_file": "aus settings.json",
         "settings_source_env": "aus Umgebung/Standard",
@@ -260,8 +282,16 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "auto_name": "Automatic",
         "auto_description": "Picks the fitting layout on every refresh.",
         "auto_rules": (
-            "Automatic means: exam when the next exam is at most {days} days away; otherwise "
-            "focus while a timer runs; otherwise classic. Semester is never picked automatically."
+            "Automatic means, in this order: weekly review inside the window {review}; exam "
+            "when the next exam is at most {days} days away; focus while a timer runs; agenda "
+            "while a session planned for today still lies ahead, inside the window {agenda}; "
+            "otherwise classic. Semester is never picked automatically."
+        ),
+        "auto_off": "off",
+        "sessions_failed": (
+            "The sessions for the agenda could not be fetched ({message}). A key issued before "
+            "the Sessions.GetAll scope existed has to be re-issued; the other layouts are not "
+            "affected."
         ),
         "auto_now": "currently: {layout}",
         "last_updated": "Panel last updated: {time}",
@@ -288,8 +318,8 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "connect_heading": "Connect",
         "connect_intro": (
             "Connects this display to your StudyLife account on {instance} without copying a "
-            "key. The client “{client}” has to be registered on the instance with the "
-            "redirect URI {redirect_uri} (see the README)."
+            "key. The client “{client}” has to be registered on the instance with the scopes "
+            "{scopes} and the redirect URI {redirect_uri} (see the README)."
         ),
         "connect_no_key": "No key stored yet.",
         "connect_connected": (
@@ -347,6 +377,16 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "settings_quiet_hours_hint": "HH-HH or HH:MM-HH:MM, may wrap past midnight; empty = off.",
         "settings_clear_at": "Daily clear at",
         "settings_clear_at_hint": "HH:MM; empty = off.",
+        "settings_auto_review": "Auto: weekly review inside the window",
+        "settings_auto_review_hint": (
+            "[weekdays] HH-HH or HH:MM-HH:MM, e.g. “sun 18-24” (24 = midnight, no wrap past "
+            "midnight); empty = rule off."
+        ),
+        "settings_auto_agenda": "Auto: agenda inside the window",
+        "settings_auto_agenda_hint": (
+            "HH-HH or HH:MM-HH:MM, e.g. “06-12”, optionally with weekdays in front; empty = "
+            "rule off."
+        ),
         "settings_update_check": "Check for a newer release (asks GitHub every 6 h)",
         "settings_source_file": "from settings.json",
         "settings_source_env": "from environment/default",
@@ -464,9 +504,15 @@ def health_report(settings: Settings, now: datetime) -> tuple[dict[str, Any], HT
     last_fetch_at = status.last_fetch_at
     if snapshot is not None:
         data = build_dashboard(
-            snapshot.metrics, snapshot.history, snapshot.timer, now, tz, snapshot.fetched_at
+            snapshot.metrics,
+            snapshot.history,
+            snapshot.timer,
+            now,
+            tz,
+            snapshot.fetched_at,
+            sessions=snapshot.sessions,
         )
-        layout = resolve_layout(load_layout_choice(settings), data)
+        layout = resolve_layout(load_layout_choice(settings), data, rules_from_settings(settings))
         stale_minutes = data.stale_minutes
         if last_fetch_at is None:
             last_fetch_at = snapshot.fetched_at
@@ -498,6 +544,7 @@ def health_report(settings: Settings, now: datetime) -> tuple[dict[str, Any], HT
         ),
         "layout": layout,
         "quiet_hours_active": quiet,
+        "sessions_ok": status.sessions_ok,
     }
     return report, HTTPStatus.OK if state != "error" else HTTPStatus.SERVICE_UNAVAILABLE
 
@@ -579,16 +626,23 @@ class WebApp:
         now = datetime.now(tz)
         snapshot = load_snapshot(Path(self.settings.display_state_path), tz)
         if snapshot is None:
-            metrics, history, timer = sample_payloads(now, tz)
-            return build_dashboard(metrics, history, timer, now, tz), True
+            metrics, history, timer, sessions = sample_payloads(now, tz)
+            return build_dashboard(metrics, history, timer, now, tz, sessions=sessions), True
         data = build_dashboard(
-            snapshot.metrics, snapshot.history, snapshot.timer, now, tz, snapshot.fetched_at
+            snapshot.metrics,
+            snapshot.history,
+            snapshot.timer,
+            now,
+            tz,
+            snapshot.fetched_at,
+            sessions=snapshot.sessions,
         )
         return data, False
 
     def preview_png(self, key: str) -> bytes:
         data, _ = self.current_data()
-        image = render(data, self.language, resolve_layout(key, data))
+        layout = resolve_layout(key, data, rules_from_settings(self.effective()))
+        image = render(data, self.language, layout)
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         return buffer.getvalue()
@@ -725,6 +779,8 @@ class WebApp:
             "quiet_hours": form.get("quiet_hours", ""),
             "clear_at": form.get("clear_at", ""),
             "update_check": form.get("update_check") == "on",
+            "auto_review": form.get("auto_review", ""),
+            "auto_agenda": form.get("auto_agenda", ""),
         }
         errors: dict[str, str] = {}
         rotate_raw = form.get("rotate", "").strip()
@@ -774,7 +830,7 @@ class WebApp:
         language = self.language
         data, is_sample = self.current_data()
         choice = load_layout_choice(settings)
-        resolved = resolve_layout(AUTO, data)
+        resolved = resolve_layout(AUTO, data, rules_from_settings(settings))
         parts = [f"<h1>{html.escape(t['title'])} · {html.escape(t['layouts_heading'])}</h1>"]
         parts.append(self._nav("/"))
         if flash in FLASH_KEYS:
@@ -793,11 +849,15 @@ class WebApp:
             quiet = t["quiet_until"].format(time=quiet_end.strftime("%H:%M"))
             parts.append(f"<p class='note'>{html.escape(quiet)}</p>")
         state_dir = self.state_dir
-        error = load_status(state_dir, zone(settings.studylife_timezone)).last_error
+        status = load_status(state_dir, zone(settings.studylife_timezone))
+        error = status.last_error
         if error is not None:
             when = error.at.strftime(TEXT[language]["date_format"] + " %H:%M")
             line = t["last_error"].format(time=when, message=error.message)
             parts.append(f"<p class='flash'>{html.escape(line)}</p>")
+        if not status.sessions_ok:
+            note = t["sessions_failed"].format(message=status.sessions_error or "?")
+            parts.append(f"<p class='warn'>{html.escape(note)}</p>")
 
         parts.append("<form method='post' action='/layout'><div class='grid'>")
         cards: list[tuple[str, str, str]] = [
@@ -829,9 +889,12 @@ class WebApp:
             "<form method='post' action='/refresh' class='actions' style='margin-top:12px'>"
             f"<button type='submit'>{html.escape(t['refresh'])}</button></form>"
         )
-        parts.append(
-            f"<p class='note'>{html.escape(t['auto_rules'].format(days=EXAM_SOON_DAYS))}</p>"
+        rules = t["auto_rules"].format(
+            days=EXAM_SOON_DAYS,
+            review=settings.display_auto_review or t["auto_off"],
+            agenda=settings.display_auto_agenda or t["auto_off"],
         )
+        parts.append(f"<p class='note'>{html.escape(rules)}</p>")
         parts.append(f"<p class='note'>{html.escape(t['full_refresh_note'])}</p>")
         parts.append(f"<footer>{html.escape(self.footer_line(state_dir, now))}</footer>")
         return _page(t["title"], "".join(parts))
@@ -852,7 +915,10 @@ class WebApp:
                 f"<a href='{README_OVERLAY_URL}'>README</a></p>"
             )
         intro = t["connect_intro"].format(
-            instance=instance, client=CLIENT_ID, redirect_uri=redirect_uri
+            instance=instance,
+            client=CLIENT_ID,
+            scopes=", ".join(SCOPES),
+            redirect_uri=redirect_uri,
         )
         parts.append(f"<p class='note'>{html.escape(intro)}</p>")
 
@@ -910,6 +976,8 @@ class WebApp:
             "quiet_hours": settings.display_quiet_hours,
             "clear_at": settings.display_clear_at,
             "update_check": settings.display_update_check,
+            "auto_review": settings.display_auto_review,
+            "auto_agenda": settings.display_auto_agenda,
         }
         if submitted:
             values.update(submitted)
@@ -966,6 +1034,13 @@ class WebApp:
             f"value='{html.escape(str(values['clear_at']), quote=True)}'>"
             f"{error('clear_at')}<small>{html.escape(t['settings_clear_at_hint'])}</small>"
         )
+        for key in ("auto_review", "auto_agenda"):
+            parts.append(
+                f"<label for='{key}'>{html.escape(t['settings_' + key])}{source(key)}</label>"
+                f"<input id='{key}' name='{key}' type='text' "
+                f"value='{html.escape(str(values[key]), quote=True)}'>"
+                f"{error(key)}<small>{html.escape(t['settings_' + key + '_hint'])}</small>"
+            )
         checked = " checked" if values["update_check"] else ""
         parts.append(
             f"<label><input type='checkbox' name='update_check'{checked}> "
@@ -1239,6 +1314,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 quiet_hours=None,
                 clear_at=None,
                 update_check=None,
+                auto_review=None,
+                auto_agenda=None,
             )
             log.info("web settings reset to the environment values")
             self._redirect("/settings?m=reset")

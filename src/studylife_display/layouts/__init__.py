@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from PIL import Image
 
-from studylife_display.layouts import classic, exam, focus, semester, week
+from studylife_display.layouts import agenda, classic, exam, focus, review, semester, week
 from studylife_display.model import DashboardData
 
 Renderer = Callable[[DashboardData, str], Image.Image]
@@ -94,6 +94,36 @@ LAYOUTS: dict[str, LayoutSpec] = {
                 ),
             },
             render=semester.render,
+        ),
+        LayoutSpec(
+            key="agenda",
+            name={"de": "Tagesplan", "en": "Agenda"},
+            description={
+                "de": (
+                    "Die heute geplanten Sessions als Liste, die nächste hervorgehoben; "
+                    "rechts Stunden, Serie und nächste Prüfung."
+                ),
+                "en": (
+                    "Today's planned sessions as a list with the next one highlighted; hours, "
+                    "streak and next exam on the right."
+                ),
+            },
+            render=agenda.render,
+        ),
+        LayoutSpec(
+            key="review",
+            name={"de": "Wochenrückblick", "en": "Weekly review"},
+            description={
+                "de": (
+                    "Die Stunden dieser Woche groß, die Änderung zur Vorwoche, meistgelernter "
+                    "Kurs, Sessions, Serie und die sieben Tage als Balken."
+                ),
+                "en": (
+                    "This week's hours, large, the change against last week, top course, "
+                    "sessions, streak and the seven days as bars."
+                ),
+            },
+            render=review.render,
         ),
     )
 }
