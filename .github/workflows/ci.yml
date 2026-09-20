@@ -28,6 +28,7 @@ jobs:
             *.blob.core.windows.net:443
             api.github.com:443
             files.pythonhosted.org:443
+            github.com:22
             github.com:443
             pypi.org:443
             raw.githubusercontent.com:443
@@ -59,6 +60,7 @@ jobs:
             *.blob.core.windows.net:443
             api.github.com:443
             files.pythonhosted.org:443
+            github.com:22
             github.com:443
             pypi.org:443
             raw.githubusercontent.com:443
@@ -98,6 +100,7 @@ jobs:
             *.blob.core.windows.net:443
             api.github.com:443
             files.pythonhosted.org:443
+            github.com:22
             github.com:443
             pypi.org:443
             raw.githubusercontent.com:443
@@ -149,6 +152,7 @@ jobs:
             *.blob.core.windows.net:443
             api.github.com:443
             files.pythonhosted.org:443
+            github.com:22
             github.com:443
             pypi.org:443
             raw.githubusercontent.com:443
