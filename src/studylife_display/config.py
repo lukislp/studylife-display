@@ -42,6 +42,21 @@ def check_public_base_url(value: str) -> str:
     return value
 
 
+def check_setup_url(value: str) -> str:
+    value = value.strip()
+    if value and not value.lower().startswith(("http://", "https://")):
+        raise ValueError("DISPLAY_SETUP_URL must be an http:// or https:// URL (or empty)")
+    return value
+
+
+def parse_bind(bind: str) -> tuple[str, int]:
+    """ "0.0.0.0:8795" -> ("0.0.0.0", 8795); a bare port binds every interface."""
+    host, sep, port = bind.rpartition(":")
+    if not sep:
+        return "0.0.0.0", int(bind)
+    return host.strip("[]") or "0.0.0.0", int(port)
+
+
 class Settings(BaseSettings):
     """Runtime configuration, loaded from environment variables / .env.
 
@@ -135,6 +150,12 @@ class Settings(BaseSettings):
     # URI (RFC 8252 allows only https or a loopback), hence the two modes.
     display_public_base_url: str = ""
 
+    # Optional: the exact URL the first-run setup screen shows and encodes in its QR code.
+    # Empty means "derive it": `<DISPLAY_PUBLIC_BASE_URL>/connect` when that is set, else
+    # `http://<hostname>.local:<web port>/connect`. Set it when the Pi is reached under a
+    # name mDNS does not give it (a DHCP reservation, a reverse proxy).
+    display_setup_url: str = ""
+
     http_timeout_seconds: float = 10.0
 
     @field_validator("display_rotate")
@@ -163,6 +184,11 @@ class Settings(BaseSettings):
     @classmethod
     def _public_base_url(cls, value: str) -> str:
         return check_public_base_url(value)
+
+    @field_validator("display_setup_url")
+    @classmethod
+    def _setup_url(cls, value: str) -> str:
+        return check_setup_url(value)
 
 
 class WebOverrides(BaseModel):

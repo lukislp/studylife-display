@@ -35,7 +35,7 @@ from studylife_display.settings_store import effective_settings
 from studylife_display.snapshot import Snapshot, save_snapshot
 from studylife_display.status_store import LastError, Status, save_status
 from studylife_display.studylife_client import StudyLifeApiError
-from studylife_display.web import SESSION_COOKIE, DisplayServer, make_server
+from studylife_display.web import SESSION_COOKIE, DisplayServer, health_report, make_server
 
 TOKEN = "correct-horse-battery"
 BASE_URL = "https://studylife.test"
@@ -347,6 +347,27 @@ class TestHealth:
         assert report["last_panel_update_at"] is None
         assert report["layout"] is None
         assert report["quiet_hours_active"] is False
+        assert report["setup"] is False
+
+    def test_no_key_at_all_is_setup_with_a_200(self, tmp_path: Path, tz: ZoneInfo) -> None:
+        no_key = make_settings(tmp_path / "nokey", studylife_api_key="")
+        report, status = health_report(no_key, datetime.now(tz))
+        assert status == 200
+        assert report["status"] == "setup"
+        assert report["setup"] is True
+        assert report["last_error"] is None
+        # A key that is there but rejected is still an error, not "setup".
+        rejected = make_settings(tmp_path / "rejected")
+        state_dir = Path(rejected.display_state_path).parent
+        save_status(
+            state_dir,
+            Status(
+                last_fetch_ok=False,
+                last_error=LastError("rejected", 403, "no scope", datetime.now(tz)),
+            ),
+        )
+        report, status = health_report(rejected, datetime.now(tz))
+        assert (status, report["status"], report["setup"]) == (503, "error", False)
 
     def test_never_leaks_the_token_or_the_cookie(self, client: Client) -> None:
         client.login()
@@ -867,3 +888,87 @@ class TestSettingsPage:
             is None
         )
         assert ImageChops.difference(shown, upright).getbbox() is not None
+
+
+class TestCurrentFrame:
+    """The frame on the panel, at the top of the layouts page and at /current.png."""
+
+    def test_requires_the_cookie(self, client: Client) -> None:
+        assert client.request("GET", "/current.png")[0] == 403
+
+    def test_placeholder_and_404_before_the_first_frame(self, client: Client) -> None:
+        client.login()
+        assert client.request("GET", "/current.png")[0] == 404
+        _, _, body = client.request("GET", "/")
+        assert b"Aktuell auf dem Panel" in body
+        assert b"Noch kein Bild auf dem Panel gezeigt." in body
+        assert b"/current.png" not in body
+
+    def test_a_refresh_puts_the_frame_on_the_page(
+        self, client: Client, settings: Settings, no_update_check: list[int]
+    ) -> None:
+        client.login()
+        # Offline and without a cache: the "no data" screen goes on the panel.
+        status, _, _ = client.request("POST", "/refresh", {}, headers=client.same_origin())
+        assert status == 303
+        status, headers, body = client.request("GET", "/current.png")
+        assert status == 200
+        assert headers["content-type"] == "image/png"
+        assert headers["cache-control"] == "no-store"
+        with Image.open(io.BytesIO(body)) as image:
+            assert image.size == (800, 480)
+        state_dir = Path(settings.display_state_path).parent
+        assert body == (state_dir / "current.png").read_bytes()
+        _, _, page = client.request("GET", "/")
+        assert b"Aktuell auf dem Panel" in page
+        assert b"Gezeigt seit" in page
+        assert b"Fehlerbildschirm" in page
+        assert re.search(rb"<img src='/current\.png\?t=\d+'", page) is not None
+        assert b"Noch kein Bild auf dem Panel gezeigt." not in page
+
+    def test_a_dashboard_frame_names_its_layout(
+        self,
+        client: Client,
+        settings: Settings,
+        sample: Any,
+        tz: ZoneInfo,
+        no_update_check: list[int],
+    ) -> None:
+        # A snapshot stamped now (not the frozen fixture date, which ages past the stale
+        # limit), so the offline refresh draws the cached dashboard, not the stale screen.
+        metrics, history, timer = sample
+        save_snapshot(
+            Path(settings.display_state_path), Snapshot(metrics, history, timer, datetime.now(tz))
+        )
+        client.login()
+        form = {"layout": "week"}
+        assert client.request("POST", "/layout", form, headers=client.same_origin())[0] == 303
+        _, _, page = client.request("GET", "/")
+        assert b"Gezeigt seit" in page
+        assert b"\xc2\xb7 Woche" in page  # "· Woche": the layout's display name
+        assert client.request("GET", "/current.png")[0] == 200
+
+
+class TestSetupHint:
+    def test_the_layouts_page_says_where_to_connect_while_no_key_is_stored(
+        self, tmp_path: Path, no_update_check: list[int]
+    ) -> None:
+        no_key = make_settings(
+            tmp_path / "nokey",
+            studylife_api_key="",
+            display_setup_url="http://pi.local:8795/connect",
+        )
+        page = web_module.WebApp(no_key, lambda: 0).layouts_page()
+        assert "Noch kein Schlüssel hinterlegt – Konto verbinden unter: ".encode() in page
+        assert b"<a href='http://pi.local:8795/connect'>http://pi.local:8795/connect</a>" in page
+
+    def test_the_hint_is_gone_once_a_key_is_stored(
+        self, settings: Settings, no_update_check: list[int]
+    ) -> None:
+        page = web_module.WebApp(settings, lambda: 0).layouts_page()
+        assert b"Konto verbinden unter" not in page
+
+    def test_the_settings_page_lists_the_setup_url(self, client: Client) -> None:
+        client.login()
+        _, _, body = client.request("GET", "/settings")
+        assert b"DISPLAY_SETUP_URL" in body

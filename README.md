@@ -76,12 +76,28 @@ The last error (kind, HTTP status, message, time) is written to `status.json` in
 directory together with the outcome of the last fetch and the time of the last panel
 update; the web interface shows it above the layouts and `/healthz` reports it.
 
+### Setup screen
+
+A panel with **no key configured at all** (`STUDYLIFE_API_KEY` empty, as right after
+`install.sh`) is not broken, so it does not get an error screen: `run` contacts nothing and
+draws **Einrichtung** / **Setup** instead - "Konto verbinden unter:", the connect URL in
+large text, the same URL as a QR code (scan it with a phone on the same network) and the
+hostname in a small line at the bottom. Exit 0; `/healthz` says `"status": "setup"` with
+HTTP 200. The URL is `DISPLAY_SETUP_URL` when set, else `<DISPLAY_PUBLIC_BASE_URL>/connect`
+when that is set, else `http://<hostname>.local:<port>/connect` from the Pi's hostname and
+`DISPLAY_WEB_BIND`. The first refresh after the key is applied replaces it with the
+dashboard. A key that *is* configured but rejected still gets the "rejected" screen above.
+
 ## Web interface
 
 `studylife-display serve` runs a small site on the Pi (port **8795**, `DISPLAY_WEB_BIND`)
-with three pages: **Layout** shows a preview of every layout plus `auto`, lets you pick one
+with three pages: **Layout** starts with "Aktuell auf dem Panel", the frame that is on the
+panel right now (any driver, kept upright as `current.png` in the state directory with the
+time it was shown and the layout or screen kind in `current.json`; served at `/current.png`
+with the cookie), then shows a preview of every layout plus `auto`, lets you pick one
 ("Übernehmen" saves the choice and refreshes the panel right away) and has a "Jetzt
-aktualisieren" button for a refresh without a change; **Verbinden** connects the StudyLife
+aktualisieren" button for a refresh without a change; while no key is stored, the page also
+says where to connect the account, like the setup screen; **Verbinden** connects the StudyLife
 account (see [Connecting the account](#connecting-the-account)); **Einstellungen** holds
 the settings that need no SSH (see [Settings in the web interface](#settings-in-the-web-interface)).
 It is reachable wherever the Pi is: on the LAN as `http://<hostname>.local:8795/`, or over
@@ -173,7 +189,8 @@ values (instance URL, key and token as set/not set, time zone, paths, bind addre
 read-only and carries nothing secret) with JSON for an uptime monitor:
 
 ```json
-{"status": "ok", "version": "1.3.0", "last_fetch_at": "2026-09-17T16:45:00+02:00",
+{"status": "ok", "setup": false, "version": "1.3.0",
+ "last_fetch_at": "2026-09-17T16:45:00+02:00",
  "last_fetch_ok": true, "stale_minutes": 3, "last_error": null,
  "last_panel_update_at": "2026-09-17T16:45:04+02:00", "layout": "classic",
  "quiet_hours_active": false}
@@ -181,6 +198,7 @@ read-only and carries nothing secret) with JSON for an uptime monitor:
 
 | `status` | HTTP | Meaning |
 | --- | --- | --- |
+| `setup` | 200 | No API key is configured yet; the panel shows the [setup screen](#setup-screen) (`setup` is `true`) |
 | `ok` | 200 | The last fetch succeeded and the snapshot is fresh |
 | `degraded` | 200 | The last fetch failed and the cached dashboard (or the stale screen) is shown, or the snapshot is older than 15 minutes outside quiet hours - the timer is not running |
 | `error` | 503 | The key was rejected, or there is no data at all |
@@ -246,7 +264,7 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 | `DISPLAY_DRIVER` | `waveshare` | `waveshare` (the panel) or `file` (a PNG) |
 | `DISPLAY_OUTPUT_PATH` | `./frame.png` | Where the `file` driver writes |
 | `DISPLAY_ROTATE` | `0` | `180` when the panel is mounted upside down; applied by the driver, anything but 0/180 is refused (*web*) |
-| `DISPLAY_STATE_PATH` | `/var/lib/studylife-display/last.json` | Cached last snapshot; `settings.json`, `status.json`, `last_clear`, `update_check.json`, `panel.lock` and the short-lived `credentials.pending.json` live in the same directory |
+| `DISPLAY_STATE_PATH` | `/var/lib/studylife-display/last.json` | Cached last snapshot; `settings.json`, `status.json`, `current.png`/`current.json` (the frame on the panel), `last_clear`, `update_check.json`, `panel.lock` and the short-lived `credentials.pending.json` live in the same directory |
 | `DISPLAY_STALE_ERROR_HOURS` | `24` | Age of the cached snapshot from which the stale screen replaces the dashboard |
 | `DISPLAY_QUIET_HOURS` | – | `HH-HH` or `HH:MM-HH:MM`, may wrap past midnight (`23-7`); no scheduled refresh inside. Empty = off (*web*) |
 | `DISPLAY_CLEAR_AT` | `04:00` | Time of the daily full clear against ghosting; empty = off (*web*) |
@@ -256,6 +274,7 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 | `DISPLAY_WEB_BIND` | `0.0.0.0:8795` | Where `serve` listens |
 | `DISPLAY_WEB_TOKEN` | – | Access token of the web interface, at least 12 characters; `serve` refuses to start without one |
 | `DISPLAY_PUBLIC_BASE_URL` | – | Optional https URL under which the web interface is reachable (a Tailscale name); the connect flow then redirects straight back to `<url>/connect/callback`. Must be registered on the client too |
+| `DISPLAY_SETUP_URL` | – | Optional: the exact URL the [setup screen](#setup-screen) shows and encodes in its QR code. Empty derives it from `DISPLAY_PUBLIC_BASE_URL` or the hostname and `DISPLAY_WEB_BIND` |
 | `HTTP_TIMEOUT_SECONDS` | `10` | Per request |
 
 `STUDYLIFE_TIMEZONE` matters more than it looks: StudyLife serialises every DateTime as naive
@@ -284,10 +303,12 @@ that zone, and a session from 23:30 to 00:30 counts half an hour on each of the 
    enables the systemd timer, the web service, the two root-only units that carry the
    settings across reboots and the one that applies the API key. Re-running it updates the
    code and never overwrites an existing env file; for updates see [Updating](#updating).
+   After `install.sh` the panel shows the [setup screen](#setup-screen) with the QR code of
+   the connect page; it stays until a key is applied.
 3. Put the instance URL into `/etc/studylife-display.env`, restart the web service
    (`sudo systemctl restart studylife-display-web.service`) and connect the account at
-   `http://<hostname>.local:8795/connect` (see
-   [Connecting the account](#connecting-the-account)). The key is applied and the first
+   `http://<hostname>.local:8795/connect` - scan the QR code on the panel, or type the URL
+   (see [Connecting the account](#connecting-the-account)). The key is applied and the first
    refresh runs by itself; `journalctl -u studylife-display.service -n 50` shows it. The
    fallback is a key issued by hand in `STUDYLIFE_API_KEY=` followed by
    `sudo systemctl start studylife-display.service`.
@@ -431,6 +452,8 @@ uv sync
 uv run studylife-display preview --sample --out frame.png   # no instance needed
 uv run studylife-display preview --sample --layout semester --out frame.png
 uv run studylife-display preview --out frame.png            # against your instance (.env)
+STUDYLIFE_API_KEY= DISPLAY_SETUP_URL=http://pi.local:8795/connect \
+  uv run studylife-display preview --out setup.png          # the setup screen, no API call
 DISPLAY_DRIVER=file DISPLAY_STATE_PATH=./state/last.json DISPLAY_WEB_TOKEN=local-dev-token \
   uv run studylife-display serve                            # http://127.0.0.1:8795/
 uv run pytest
@@ -447,7 +470,8 @@ with the previews in `docs/` (`uv run studylife-display preview --sample --layou
 docs/preview-<key>.png` for each of the five; `docs/preview.png` is the classic one).
 Layouts live in `src/studylife_display/layouts/`, one module each, registered in
 `layouts/__init__.py`; the drawing helpers they share are in `layouts/common.py`, the error
-screens in `layouts/error.py`. Rotation is applied in `driver.py` only, so the goldens are
+screens in `layouts/error.py`, the setup screen (QR code via `segno`, drawn module by module)
+in `layouts/setup.py`. Rotation is applied in `driver.py` only, so the goldens are
 always upright.
 
 The version comes from the git tag the checkout sits on (`hatch-vcs`; `1.2.1.devN+g...`
