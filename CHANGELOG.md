@@ -1,3 +1,10 @@
+## [1.4.3](https://github.com/lukislp/studylife-display/compare/v1.4.2...v1.4.3) (2026-09-20)
+
+
+### Bug Fixes
+
+* **ci:** correct missing Harden Runner allowlist ports (github.com:22, crl:80) ([#20](https://github.com/lukislp/studylife-display/issues/20)) ([200f0d4](https://github.com/lukislp/studylife-display/commit/200f0d47bf3ae8689b90b90adadcc7ef0ecb942e))
+
 ## [1.4.2](https://github.com/lukislp/studylife-display/compare/v1.4.1...v1.4.2) (2026-09-20)
 
 
