@@ -1,3 +1,10 @@
+# [1.5.0](https://github.com/lukislp/studylife-display/compare/v1.4.3...v1.5.0) (2026-09-20)
+
+
+### Features
+
+* first-run setup screen with QR code and the current panel image in the web UI ([#22](https://github.com/lukislp/studylife-display/issues/22)) ([c472262](https://github.com/lukislp/studylife-display/commit/c47226285926993cfb83bc31cec48ef88e357e57))
+
 ## [1.4.3](https://github.com/lukislp/studylife-display/compare/v1.4.2...v1.4.3) (2026-09-20)
 
 
