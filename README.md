@@ -7,8 +7,8 @@
 
 A study dashboard for [StudyLife](https://github.com/lukislp/studylife) on a 7.5" e-paper
 panel: a Raspberry Pi on the desk that shows, without a screen to unlock or a tab to find,
-how today is going. It reads three read-only endpoints every five minutes and redraws the
-panel; between refreshes the Pi and the panel sleep. Five layouts are built in, an "auto"
+how today is going. It reads four read-only endpoints every five minutes and redraws the
+panel; between refreshes the Pi and the panel sleep. Seven layouts are built in, an "auto"
 mode picks between them, and a small web interface on the Pi switches them from a phone,
 connects the StudyLife account without copying a key, and holds the settings.
 
@@ -42,17 +42,27 @@ empty = no session, light hatch = under 1 h, dense hatch = under 2.5 h, solid = 
 | `exam` | The countdown as the hero: inverted "in N Tagen" block, course and date; below it hours per course over the last 28 days (top 5, from the session history) and a streak/today line | ![exam](docs/preview-exam.png) |
 | `week` | The week target as a large bar with hours, target range and percent; the 4-week heatmap large with weekday initials and per-week sums; today's hours and streak at the bottom | ![week](docs/preview-week.png) |
 | `semester` | ECTS earned of total as a big number with a progress bar, the average grade (or "noch keine Note"), the expected graduation date ("nicht verfügbar" / "abgeschlossen"), the course that has gone longest without a session (or "alle Kurse aktiv"), topics completed of total, and the programme name. Never picked by `auto`; all of it from `metrics/summary` (`ects`, `averageGrade`, `forecast`, `neglectedCourse`, `topics`) | ![semester](docs/preview-semester.png) |
+| `agenda` | Today's plan: the sessions planned for today from `GET /api/sessions` (up to six rows of `HH:MM–HH:MM`, course and topic; completed ones ticked, the running or next one inverted like the exam countdown, "+N weitere" when there are more, "keine Sessions geplant" when there are none), with today's hours, the streak and the next exam in a column on the right and the timer (or the week target) at the bottom. Empty when the key lacks the `Sessions.GetAll` scope | ![agenda](docs/preview-agenda.png) |
+| `review` | The weekly review: this week's hours large with the change against the week before (sign and an up/down marker), the course studied most, the session count and the streak on the right, the seven days Monday to Sunday as small bars, and StudyLife's own `weeklyReport` of the previous week in the footer. The hero figures are summed on the Pi from the session history for the current week, because the server's report always describes the last *completed* week | ![review](docs/preview-review.png) |
 
 Every layout keeps the header line (date, "aktualisiert HH:MM" and the stale marker), because
 that line is the only way to tell an old frame from a fresh one.
 
-`auto` (the default) picks per refresh:
+`auto` (the default) picks per refresh, trying these rules in this order (the setup and
+error screens are decided before any of them):
 
-1. `exam` when the next course goal is due in **7 days or fewer** (today, overdue and
-   negative counts included);
-2. otherwise `focus` while a timer is running;
-3. otherwise `classic`.
+1. `review` inside the review window - by default **Sunday 18:00 to 24:00**
+   (`DISPLAY_AUTO_REVIEW=sun 18-24`);
+2. otherwise `exam` when the next course goal is due in **7 days or fewer** (today, overdue
+   and negative counts included);
+3. otherwise `focus` while a timer is running;
+4. otherwise `agenda` while at least one session planned for today has not ended yet and the
+   time is inside the agenda window - by default **06:00 to 12:00** (`DISPLAY_AUTO_AGENDA=06-12`);
+5. otherwise `classic`.
 
+The two windows use the quiet-hours notation with an optional list of weekdays in front
+(`sun`, `sat,sun`, `mon-fri`; `24` is allowed as the end, a window may not wrap past
+midnight) and can be changed on the settings page; an empty window switches that rule off.
 `semester` is never chosen automatically: it is the view to switch to on purpose. The
 choice comes from, in order of precedence, `settings.json` next to the cached snapshot
 (written by the web interface) and the `DISPLAY_LAYOUT` variable. Switching layouts is a full
@@ -173,8 +183,9 @@ detects that; connect first, enable the overlay afterwards.
 
 ### Settings in the web interface
 
-`Einstellungen` holds language, rotation, quiet hours, the daily clear time and the update
-check. They are saved into the same `settings.json` as the layout choice (so they survive a
+`Einstellungen` holds language, rotation, quiet hours, the daily clear time, the update
+check and the two windows of the auto rules (weekly review, agenda). They are saved into the
+same `settings.json` as the layout choice (so they survive a
 reboot the same way, see [SD-card protection](#sd-card-protection)), validated with the
 same rules as the environment variables (an invalid value is shown next to the field and
 nothing is written), and take precedence over the environment: `run`, `serve` and `check`
@@ -193,7 +204,7 @@ read-only and carries nothing secret) with JSON for an uptime monitor:
  "last_fetch_at": "2026-09-17T16:45:00+02:00",
  "last_fetch_ok": true, "stale_minutes": 3, "last_error": null,
  "last_panel_update_at": "2026-09-17T16:45:04+02:00", "layout": "classic",
- "quiet_hours_active": false}
+ "quiet_hours_active": false, "sessions_ok": true}
 ```
 
 | `status` | HTTP | Meaning |
@@ -207,8 +218,10 @@ read-only and carries nothing secret) with JSON for an uptime monitor:
 "message": "...", "at": "..."}`. For **Uptime Kuma**: monitor type *HTTP(s) - Keyword* or
 *JSON Query*, URL `http://<hostname>:8795/healthz`, expected keyword `"status": "ok"` (or JSON
 query `status` == `ok`); a plain HTTP monitor only catches `error`, since `degraded` is a 200.
-Set the interval to a few minutes; the endpoint reads two small files and never calls
-StudyLife.
+`sessions_ok` is `false` when the last fetch got everything but the session list (a key
+without the `Sessions.GetAll` scope, typically): the dashboard is fine, only the agenda is
+empty, and the layouts page says why. Set the interval to a few minutes; the endpoint reads
+two small files and never calls StudyLife.
 
 ## Hardware
 
@@ -235,18 +248,24 @@ Register the display as a client on your StudyLife instance through
 | Field | Value |
 | --- | --- |
 | Client ID | `studylife-display` |
-| Requested scopes | `Metrics.GetSummary`, `Sessions.GetHistory`, `TimerState.Get` |
+| Requested scopes | `Metrics.GetSummary`, `Sessions.GetAll`, `Sessions.GetHistory`, `TimerState.Get` |
 | Redirect URIs | `http://localhost:8795/connect/callback` (the port from `DISPLAY_WEB_BIND`), plus `https://<DISPLAY_PUBLIC_BASE_URL>/connect/callback` if you use one |
 
 | Scope | Endpoint |
 | --- | --- |
 | `Metrics.GetSummary` | `GET /api/metrics/summary` |
+| `Sessions.GetAll` | `GET /api/sessions` (the full list incl. planned sessions, for the `agenda` layout; polled with `If-None-Match`, so an unchanged list costs a 304 and no body) |
 | `Sessions.GetHistory` | `GET /api/sessions/history?days=28&onlyCompleted=true` |
 | `TimerState.Get` | `GET /api/timerstate` |
 
 `Auth.Whoami` is implied for every key. Nothing here writes: the display cannot start,
 stop or change a session, so a key that ends up on a lost SD card can only ever read your
-study statistics. Then put the instance URL into `/etc/studylife-display.env` and connect
+study statistics. `Sessions.GetAll` is the one scope that is optional in practice: a key
+issued without it (every key from before the `agenda` layout existed) still drives every
+other layout, the session list is simply treated as empty, the refresh logs a warning, and
+`/healthz` and the layouts page say so (`sessions_ok`). To get the agenda, add the scope to
+the client in studylife-developers and connect again so that a key with all four scopes is
+issued. Then put the instance URL into `/etc/studylife-display.env` and connect
 from the web interface (`http://<hostname>.local:8795/connect`, see
 [Connecting the account](#connecting-the-account)); the key lands in the environment file
 by itself. Issuing a key by hand in studylife-developers and pasting it into
@@ -269,7 +288,9 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 | `DISPLAY_QUIET_HOURS` | – | `HH-HH` or `HH:MM-HH:MM`, may wrap past midnight (`23-7`); no scheduled refresh inside. Empty = off (*web*) |
 | `DISPLAY_CLEAR_AT` | `04:00` | Time of the daily full clear against ghosting; empty = off (*web*) |
 | `DISPLAY_UPDATE_CHECK` | `false` | Let the web interface ask GitHub (once per 6 h) whether a newer release exists (*web*) |
-| `DISPLAY_LAYOUT` | `auto` | `auto`, `classic`, `focus`, `exam`, `week` or `semester`; overridden by the choice made in the web interface |
+| `DISPLAY_LAYOUT` | `auto` | `auto`, `classic`, `focus`, `exam`, `week`, `semester`, `agenda` or `review`; overridden by the choice made in the web interface |
+| `DISPLAY_AUTO_REVIEW` | `sun 18-24` | Window of the `review` rule in `auto`: `[weekdays] HH-HH` or `HH:MM-HH:MM` (`24` = midnight, no wrap past midnight); empty = rule off (*web*) |
+| `DISPLAY_AUTO_AGENDA` | `06-12` | Window of the `agenda` rule in `auto`, same notation; empty = rule off (*web*) |
 | `DISPLAY_PERSIST_PATH` | `/boot/firmware/studylife-display/settings.json` | Copy of the web interface's choice on the boot partition, restored at boot (see [SD-card protection](#sd-card-protection)); empty disables it |
 | `DISPLAY_WEB_BIND` | `0.0.0.0:8795` | Where `serve` listens |
 | `DISPLAY_WEB_TOKEN` | – | Access token of the web interface, at least 12 characters; `serve` refuses to start without one |
@@ -432,6 +453,7 @@ before showing it, the layouts (and their golden frames) stay upright.
 | Panel stays white, service exits 0 | Driver-board switches (B / 0) and the FPC cable's orientation |
 | Header shows `· vor N min` | The last fetch failed; `journalctl -u studylife-display.service` names the reason, and so does `/healthz` |
 | Panel says **Schlüssel abgelehnt** / **API key rejected** | StudyLife answered 401/403: no key yet, the key is wrong or misses a scope (`Metrics.GetSummary`, `Sessions.GetHistory`, `TimerState.Get`); connect again from `/connect` (or fix `/etc/studylife-display.env`) and `sudo systemctl start studylife-display.service` |
+| `agenda` says **keine Sessions geplant** although sessions are planned; `/healthz` has `"sessions_ok": false` | The key lacks `Sessions.GetAll` (keys from before that scope was requested); the journal shows "could not fetch the session list". Add the scope to the client in studylife-developers and connect again |
 | Connect page: StudyLife shows an error instead of the consent screen | The client `studylife-display` is not registered on that instance, or the redirect URI (`http://localhost:8795/connect/callback`, or the `DISPLAY_PUBLIC_BASE_URL` one) is not on its list - the server matches it character for character |
 | Connect page says "Schlüssel übernommen" but the key never arrives | `journalctl -u studylife-display-credentials.service -n 20`; `systemctl status studylife-display-credentials.path` must be active. With the overlay on, the key is gone after a reboot: disable it, connect, re-enable |
 | Connect page says the pasted address does not belong to this attempt | The link was regenerated (or the web service restarted) in between; generate a new link and go through StudyLife again |
@@ -443,7 +465,7 @@ before showing it, the layouts (and their golden frames) stay upright.
 | Web interface does not answer | `journalctl -u studylife-display-web.service -n 20`; `DISPLAY_WEB_TOKEN` missing or shorter than 12 characters makes `serve` exit immediately |
 | Refresh from the browser reports "busy" or waits | The timer's refresh holds `panel.lock`; it is over within seconds, a stuck one times out after 60 s |
 | Layout choice falls back to `DISPLAY_LAYOUT` after a reboot | `journalctl -u studylife-display-persist -u studylife-display-restore -n 20`; after a choice in the web interface `ls /boot/firmware/studylife-display/` must show `settings.json`, and `systemctl status studylife-display-persist.path` must be active |
-| `studylife-display check` | Calls the three endpoints and prints what the dashboard would be built from, without touching the panel |
+| `studylife-display check` | Calls the four endpoints and prints what the dashboard would be built from, without touching the panel |
 
 ## Development
 
@@ -467,7 +489,7 @@ The `pi` extra is not installed by `uv sync` and is never imported outside
 `tests/golden/<layout>_<language>.png` are the reference frames; after an intentional layout
 change regenerate them with `uv run pytest --update-goldens` and commit the result together
 with the previews in `docs/` (`uv run studylife-display preview --sample --layout <key> --out
-docs/preview-<key>.png` for each of the five; `docs/preview.png` is the classic one).
+docs/preview-<key>.png` for each of the seven; `docs/preview.png` is the classic one).
 Layouts live in `src/studylife_display/layouts/`, one module each, registered in
 `layouts/__init__.py`; the drawing helpers they share are in `layouts/common.py`, the error
 screens in `layouts/error.py`, the setup screen (QR code via `segno`, drawn module by module)

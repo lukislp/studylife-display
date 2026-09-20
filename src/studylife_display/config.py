@@ -3,15 +3,16 @@ from typing import Any, Literal
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from studylife_display.auto_rules import parse_rule_window
 from studylife_display.daily_clear import parse_clear_at
 from studylife_display.quiet_hours import parse_quiet_hours
 
 ROTATIONS = (0, 180)
 LANGUAGES = ("de", "en")
-LAYOUT_CHOICES = ("auto", "classic", "focus", "exam", "week", "semester")
+LAYOUT_CHOICES = ("auto", "classic", "focus", "exam", "week", "semester", "agenda", "review")
 
 Language = Literal["de", "en"]
-LayoutChoice = Literal["auto", "classic", "focus", "exam", "week", "semester"]
+LayoutChoice = Literal["auto", "classic", "focus", "exam", "week", "semester", "agenda", "review"]
 
 
 # The validators are plain functions so that the environment settings below and the
@@ -32,6 +33,11 @@ def check_quiet_hours(value: str) -> str:
 
 def check_clear_at(value: str) -> str:
     parse_clear_at(value)  # raises ValueError with the reason
+    return value.strip()
+
+
+def check_auto_window(value: str) -> str:
+    parse_rule_window(value)  # raises ValueError with the reason
     return value.strip()
 
 
@@ -70,8 +76,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     # This single person's StudyLife instance and a READ-ONLY API key (Metrics.GetSummary,
-    # Sessions.GetHistory, TimerState.Get). The display never writes anything back, so a key
-    # with more scopes than that is a liability sitting on an SD card, not a convenience.
+    # Sessions.GetAll, Sessions.GetHistory, TimerState.Get; see studylife_client.SCOPES).
+    # The display never writes anything back, so a key with more scopes than that is a
+    # liability sitting on an SD card, not a convenience.
     # The key may be empty until the account is connected from the web interface, which
     # writes it into the environment file through `credentials-apply`.
     studylife_base_url: AnyHttpUrl
@@ -123,11 +130,19 @@ class Settings(BaseSettings):
     # anything but the StudyLife instance unless the person installing opts in.
     display_update_check: bool = False
 
-    # Which layout to draw (see studylife_display.layouts). "auto" picks per refresh:
-    # the exam countdown when one is due within a week, the timer while it runs, classic
-    # otherwise ("semester" is never picked automatically). A settings.json written by the
-    # web interface next to the cache overrides this value.
+    # Which layout to draw (see studylife_display.layouts). "auto" picks per refresh, in this
+    # order: the weekly review inside its window, the exam countdown when one is due within a
+    # week, the timer while it runs, the agenda while a session planned for today still lies
+    # ahead (inside its window), classic otherwise ("semester" is never picked
+    # automatically). A settings.json written by the web interface next to the cache
+    # overrides this value.
     display_layout: LayoutChoice = "auto"
+
+    # The two windows of the auto rules: `[weekdays] HH-HH` or `HH:MM-HH:MM` (end may be
+    # 24 for midnight, no wrap past midnight; see auto_rules.py). Empty switches the rule
+    # off. The review rule comes first of all, the agenda rule last before classic.
+    display_auto_review: str = "sun 18-24"
+    display_auto_agenda: str = "06-12"
 
     # A second copy of settings.json on the boot partition, which stays writable by root
     # even when Raspberry Pi OS's overlay filesystem turns the rest of the SD card (the state
@@ -180,6 +195,11 @@ class Settings(BaseSettings):
     def _clear_at(cls, value: str) -> str:
         return check_clear_at(value)
 
+    @field_validator("display_auto_review", "display_auto_agenda")
+    @classmethod
+    def _auto_window(cls, value: str) -> str:
+        return check_auto_window(value)
+
     @field_validator("display_public_base_url")
     @classmethod
     def _public_base_url(cls, value: str) -> str:
@@ -204,6 +224,8 @@ class WebOverrides(BaseModel):
     quiet_hours: str | None = None
     clear_at: str | None = None
     update_check: bool | None = None
+    auto_review: str | None = None
+    auto_agenda: str | None = None
 
     @field_validator("rotate")
     @classmethod
@@ -220,6 +242,11 @@ class WebOverrides(BaseModel):
     def _clear_at(cls, value: str | None) -> str | None:
         return None if value is None else check_clear_at(value)
 
+    @field_validator("auto_review", "auto_agenda")
+    @classmethod
+    def _auto_window(cls, value: str | None) -> str | None:
+        return None if value is None else check_auto_window(value)
+
     def as_json(self) -> dict[str, Any]:
         """Only the fields that are set, in a stable order."""
         return {key: value for key, value in self.model_dump().items() if value is not None}
@@ -233,4 +260,6 @@ OVERRIDE_FIELDS: dict[str, str] = {
     "quiet_hours": "display_quiet_hours",
     "clear_at": "display_clear_at",
     "update_check": "display_update_check",
+    "auto_review": "display_auto_review",
+    "auto_agenda": "display_auto_agenda",
 }

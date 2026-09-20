@@ -1,4 +1,4 @@
-"""Turns the three raw API payloads into the one immutable value the renderer draws.
+"""Turns the four raw API payloads into the one immutable value the renderer draws.
 
 Everything that touches a StudyLife field name lives in this module and is listed in
 USED_FIELDS. The server silently drops unknown fields on input and simply never sends a
@@ -57,10 +57,19 @@ USED_FIELDS: dict[str, frozenset[str]] = {
             "topics",
             "topics.completed",
             "topics.total",
+            "weeklyReport",
+            "weeklyReport.weekId",
+            "weeklyReport.hours",
+            "weeklyReport.deltaVsPreviousWeek",
+            "weeklyReport.topCourseName",
+            "weeklyReport.sessionCount",
         }
     ),
     "history": frozenset({"[].startTime", "[].endTime", "[].courseName"}),
     "timer": frozenset({"isRunning", "isBreak", "phaseEndsAt", "currentRound"}),
+    "sessions": frozenset(
+        {"[].startTime", "[].endTime", "[].courseName", "[].topic", "[].isCompleted"}
+    ),
 }
 
 
@@ -118,6 +127,30 @@ class Topics:
 
 
 @dataclass(frozen=True)
+class WeeklyReport:
+    """`metrics/summary` -> `weeklyReport`: the server's figures for the current week."""
+
+    week_id: str
+    hours: float
+    delta_vs_previous_week: float
+    top_course_name: str | None
+    session_count: int
+
+
+@dataclass(frozen=True)
+class AgendaItem:
+    """One session planned for today (from `GET /api/sessions`), for the agenda layout."""
+
+    start: datetime
+    end: datetime
+    course_name: str
+    topic: str | None
+    is_completed: bool
+    # The wall clock is inside [start, end) right now.
+    is_running_now: bool
+
+
+@dataclass(frozen=True)
 class DashboardData:
     today_hours: float
     week_hours: float
@@ -141,9 +174,30 @@ class DashboardData:
     forecast: Forecast
     neglected_course: NeglectedCourse | None
     topics: Topics
+    # The server's `weeklyReport` - always the last COMPLETED Monday-to-Sunday week (the
+    # review layout's footer); zeros when the section is missing.
+    weekly_report: WeeklyReport
+    # The current Monday-to-Sunday week, summed from the history on the Pi: what the review
+    # layout shows large. Delta against the week before, top course by hours.
+    this_week: WeeklyReport
+    # Hours per day of the current Monday-to-Sunday week from the history, Monday first;
+    # days still to come are 0.
+    week_strip: tuple[float, ...]
+    # Today's planned sessions (the "agenda" layout), sorted by start; empty when the
+    # session list could not be fetched.
+    agenda: tuple[AgendaItem, ...]
     fetched_at: datetime
+    # `now` in the server's zone: the wall clock every layout and the auto rules work with.
     now: datetime
     stale_minutes: int
+
+    @property
+    def next_agenda_item(self) -> AgendaItem | None:
+        """The running or next session of today: the first whose end is still ahead."""
+        for item in self.agenda:
+            if item.end > self.now:
+                return item
+        return None
 
 
 def _as_float(value: object) -> float:
@@ -249,6 +303,80 @@ def _neglected_course(metrics: dict[str, Any], tz: ZoneInfo) -> NeglectedCourse 
     )
 
 
+def count_sessions(
+    history: list[dict[str, Any]], window_start: datetime, window_end: datetime, tz: ZoneInfo
+) -> int:
+    """Sessions that start inside [window_start, window_end) and have a usable end."""
+    count = 0
+    for session in history:
+        start = parse_optional(session.get("startTime"), tz)
+        end = parse_optional(session.get("endTime"), tz)
+        if start is None or end is None or end <= start:
+            continue
+        if window_start <= start < window_end:
+            count += 1
+    return count
+
+
+def this_week_report(history: list[dict[str, Any]], monday: date, tz: ZoneInfo) -> WeeklyReport:
+    """The week starting on `monday`, summed from the history like the heatmap is: hours,
+    the change against the week before, the course with the most hours, session count."""
+    days = [monday + timedelta(days=offset) for offset in range(7)]
+    previous = [monday - timedelta(days=7 - offset) for offset in range(7)]
+    hours = sum(hours_per_day(history, days, tz))
+    previous_hours = sum(hours_per_day(history, previous, tz))
+    window_start = day_bounds(days[0], tz)[0]
+    window_end = day_bounds(days[-1], tz)[1]
+    courses = hours_per_course(history, window_start, window_end, tz)
+    iso = monday.isocalendar()
+    return WeeklyReport(
+        week_id=f"{iso.year}-W{iso.week:02d}",
+        hours=hours,
+        delta_vs_previous_week=hours - previous_hours,
+        top_course_name=(courses[0][0] or None) if courses else None,
+        session_count=count_sessions(history, window_start, window_end, tz),
+    )
+
+
+def _weekly_report(metrics: dict[str, Any]) -> WeeklyReport:
+    report = _as_dict(metrics.get("weeklyReport"))
+    week_id = report.get("weekId")
+    top = report.get("topCourseName")
+    return WeeklyReport(
+        week_id=str(week_id) if week_id else "",
+        hours=_as_float(report.get("hours")),
+        delta_vs_previous_week=_as_float(report.get("deltaVsPreviousWeek")),
+        top_course_name=str(top) if top else None,
+        session_count=_as_int(report.get("sessionCount")),
+    )
+
+
+def agenda_items(sessions: list[dict[str, Any]], now: datetime, tz: ZoneInfo) -> list[AgendaItem]:
+    """The sessions that start on the local calendar day of `now`, sorted by start. A session
+    without a usable start or end (or that ends before it starts) is skipped."""
+    today = local_day(now, tz)
+    items: list[AgendaItem] = []
+    for session in sessions:
+        start = parse_optional(session.get("startTime"), tz)
+        end = parse_optional(session.get("endTime"), tz)
+        if start is None or end is None or end <= start or local_day(start, tz) != today:
+            continue
+        name = session.get("courseName")
+        topic = session.get("topic")
+        items.append(
+            AgendaItem(
+                start=start,
+                end=end,
+                course_name=str(name) if name else "",
+                topic=str(topic) if topic else None,
+                is_completed=bool(session.get("isCompleted")),
+                is_running_now=start <= now < end,
+            )
+        )
+    items.sort(key=lambda item: (item.start, item.end))
+    return items
+
+
 def _timer(timer: dict[str, Any], tz: ZoneInfo) -> TimerInfo | None:
     if not timer.get("isRunning"):
         return None
@@ -267,12 +395,18 @@ def build_dashboard(
     now: datetime,
     tz: ZoneInfo,
     fetched_at: datetime | None = None,
+    sessions: list[dict[str, Any]] | None = None,
 ) -> DashboardData:
     """Pure: no clock, no I/O. `now` decides what "today" is (in `tz`); `fetched_at` is when
-    the payloads were obtained and defaults to `now` for a fresh fetch."""
+    the payloads were obtained and defaults to `now` for a fresh fetch; `sessions` is the
+    optional session list (None or empty = no agenda)."""
+    now = now.astimezone(tz)
     today = local_day(now, tz)
     days = [today - timedelta(days=offset) for offset in range(HEATMAP_DAYS - 1, -1, -1)]
     per_day = hours_per_day(history, days, tz)
+    monday = today - timedelta(days=today.weekday())
+    week_days = [monday + timedelta(days=offset) for offset in range(7)]
+    week_strip = tuple(hours_per_day(history, week_days, tz))
     window_start = day_bounds(days[0], tz)[0]
     window_end = day_bounds(days[-1], tz)[1]
     course_hours = tuple(hours_per_course(history, window_start, window_end, tz))
@@ -315,6 +449,10 @@ def build_dashboard(
         topics=Topics(
             completed=_as_int(topics.get("completed")), total=_as_int(topics.get("total"))
         ),
+        weekly_report=_weekly_report(metrics),
+        this_week=this_week_report(history, monday, tz),
+        week_strip=week_strip,
+        agenda=tuple(agenda_items(sessions or [], now, tz)),
         fetched_at=obtained,
         now=now,
         stale_minutes=max(0, int(stale_seconds // 60)),

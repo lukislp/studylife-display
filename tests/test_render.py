@@ -8,13 +8,22 @@ import pytest
 from PIL import Image, ImageChops
 
 from studylife_display.layouts import LAYOUTS
+from studylife_display.layouts.agenda import MAX_ROWS, MORE_BASELINE, row_box
 from studylife_display.layouts.classic import HEATMAP_BOX
 from studylife_display.layouts.common import format_minutes_seconds
 from studylife_display.layouts.exam import HERO_BOX
 from studylife_display.layouts.focus import remaining_seconds
+from studylife_display.layouts.review import STRIP_BOX, format_delta, format_week
 from studylife_display.layouts.semester import ECTS_BAR_BOX
 from studylife_display.layouts.week import QUOTA_BAR_BOX
-from studylife_display.model import DashboardData, Forecast, TimerInfo, build_dashboard
+from studylife_display.model import (
+    AgendaItem,
+    DashboardData,
+    Forecast,
+    TimerInfo,
+    WeeklyReport,
+    build_dashboard,
+)
 from studylife_display.render import (
     COUNTDOWN_BOX,
     HEIGHT,
@@ -38,8 +47,8 @@ GOLDEN_TOLERANCE = 0.03
 
 @pytest.fixture
 def data(sample: Any, fixed_now: datetime, tz: ZoneInfo) -> DashboardData:
-    metrics, history, timer = sample
-    return build_dashboard(metrics, history, timer, fixed_now, tz)
+    metrics, history, timer, sessions = sample
+    return build_dashboard(metrics, history, timer, fixed_now, tz, sessions=sessions)
 
 
 def black_fraction(image: Image.Image, box: tuple[int, int, int, int]) -> float:
@@ -168,6 +177,65 @@ class TestLayouts:
         assert names == ["Lineare Algebra", "Datenbanken", "Betriebssysteme"]
         assert hours == sorted(hours, reverse=True)
 
+    def test_agenda_inverts_the_next_row_only(self, data: DashboardData) -> None:
+        # Sample: row 0 is done, row 1 is running at 16:45 -> that one is inverted.
+        image = render(data, "de", "agenda")
+        assert data.agenda[1] is data.next_agenda_item
+        assert black_fraction(image, row_box(1)) > 0.5
+        assert black_fraction(image, row_box(0)) < 0.3
+        assert black_fraction(image, row_box(2)) < 0.3
+        # Once every session is over, no row is inverted.
+        evening = replace(data, now=data.now.replace(hour=23, minute=30))
+        assert evening.next_agenda_item is None
+        assert black_fraction(render(evening, "de", "agenda"), row_box(1)) < 0.3
+
+    def test_agenda_empty_state_and_overflow(self, data: DashboardData) -> None:
+        empty = replace(data, agenda=())
+        image = render(empty, "de", "agenda")
+        assert image.size == (WIDTH, HEIGHT)
+        assert black_fraction(image, row_box(0)) < 0.3
+        assert black_fraction(image, row_box(1)) == 0.0
+        more_line = (0, MORE_BASELINE - 18, 300, MORE_BASELINE + 6)
+        assert black_fraction(image, more_line) == 0.0
+        first = data.agenda[0]
+        many = tuple(
+            replace(first, start=first.start.replace(hour=hour), end=first.end.replace(hour=hour))
+            for hour in range(8, 8 + MAX_ROWS + 2)
+        )
+        crowded = render(replace(data, agenda=many), "de", "agenda")
+        assert black_fraction(crowded, row_box(MAX_ROWS - 1)) > 0.0
+        assert black_fraction(crowded, more_line) > 0.0
+        assert render(replace(data, agenda=many), "en", "agenda").size == (WIDTH, HEIGHT)
+
+    def test_agenda_row_without_a_topic_renders(self, data: DashboardData) -> None:
+        bare = AgendaItem(data.agenda[2].start, data.agenda[2].end, "", None, False, False)
+        image = render(replace(data, agenda=(bare,)), "en", "agenda")
+        assert black_fraction(image, row_box(0)) > 0.5  # it is the next one
+
+    def test_review_strip_follows_the_week(self, data: DashboardData) -> None:
+        # Sample week (Mon-Thu with sessions, Fri-Sun ahead): bars on the left, none right.
+        image = render(data, "de", "review")
+        left, top, right, bottom = STRIP_BOX
+        assert black_fraction(image, (left, top, left + (right - left) * 4 // 7, bottom)) > 0.1
+        quiet = replace(data, week_strip=(0.0,) * 7)
+        assert black_fraction(render(quiet, "de", "review"), STRIP_BOX) < 0.02
+
+    def test_review_delta_and_week_formatting(self) -> None:
+        assert format_delta(2.5, TEXT["de"]) == "+2,5 h zur Vorwoche"
+        assert format_delta(-1.0, TEXT["en"]) == "−1 h vs. last week"
+        assert format_delta(0.04, TEXT["de"]) == "±0 h zur Vorwoche"
+        assert format_week("2026-W38", TEXT["de"]) == "KW 38"
+        assert format_week("2026-W05", TEXT["en"]) == "W5"
+        assert format_week("odd", TEXT["en"]) == "odd"
+
+    def test_review_without_a_server_report(self, data: DashboardData) -> None:
+        bare = replace(data, weekly_report=WeeklyReport("", 0.0, 0.0, None, 0))
+        image = render(bare, "de", "review")
+        assert image.size == (WIDTH, HEIGHT)
+        assert differing_fraction(image, render(data, "de", "review")) > 0.0
+        down = replace(data, this_week=replace(data.this_week, delta_vs_previous_week=-3.0))
+        assert differing_fraction(render(down, "en", "review"), render(data, "en", "review")) > 0.0
+
 
 class TestGoldens:
     @pytest.mark.parametrize(
@@ -179,6 +247,8 @@ class TestGoldens:
             ("exam", "de"),
             ("week", "de"),
             ("semester", "de"),
+            ("agenda", "de"),
+            ("review", "de"),
         ],
     )
     def test_matches_golden(

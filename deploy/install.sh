@@ -149,7 +149,7 @@ if [ ! -f "$ENV_FILE" ]; then
   fi
   {
     cat <<'EOF'
-# StudyLife instance. The READ-ONLY API key (scopes Metrics.GetSummary,
+# StudyLife instance. The READ-ONLY API key (scopes Metrics.GetSummary, Sessions.GetAll,
 # Sessions.GetHistory, TimerState.Get) is filled in by the web interface's connect page
 # (http://<hostname>.local:8795/connect); pasting one here by hand works too.
 STUDYLIFE_BASE_URL=https://studylife.example.com
@@ -157,8 +157,13 @@ STUDYLIFE_API_KEY=
 # Time zone of the StudyLife SERVER (its timestamps carry no offset).
 STUDYLIFE_TIMEZONE=Europe/Berlin
 # DISPLAY_LANGUAGE=de
-# Layout when the web interface has not chosen one yet: auto, classic, focus, exam, week.
+# Layout when the web interface has not chosen one yet: auto, classic, focus, exam, week,
+# semester, agenda, review.
 # DISPLAY_LAYOUT=auto
+# Windows of two auto rules ([weekdays] HH-HH, 24 = midnight; empty = rule off): the weekly
+# review, tried first, and the agenda, tried last before classic.
+# DISPLAY_AUTO_REVIEW=sun 18-24
+# DISPLAY_AUTO_AGENDA=06-12
 # Web interface: bind address and the access token asked for on its login page.
 # DISPLAY_WEB_BIND=0.0.0.0:8795
 # Optional https URL of this web interface (a Tailscale name, say): StudyLife then

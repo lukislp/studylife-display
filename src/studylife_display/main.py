@@ -27,7 +27,7 @@ from studylife_display.daily_clear import (
     save_last_clear,
 )
 from studylife_display.driver import Display, FileDisplay, WaveshareDisplay
-from studylife_display.layouts.auto import resolve_layout
+from studylife_display.layouts.auto import resolve_layout, rules_from_settings
 from studylife_display.layouts.error import format_age, render_error
 from studylife_display.layouts.setup import render_setup
 from studylife_display.model import DashboardData, build_dashboard
@@ -80,6 +80,7 @@ def build(snapshot: Snapshot, now: datetime, tz: ZoneInfo) -> DashboardData:
         now,
         tz,
         fetched_at=snapshot.fetched_at,
+        sessions=snapshot.sessions,
     )
 
 
@@ -222,9 +223,12 @@ def refresh_panel(
         return 0 if shown else 1
 
     snapshot: Snapshot | None
+    # The cache is read up front: its session-list ETag lets the fetch ask with
+    # If-None-Match, and it is the fallback when the fetch fails.
+    cached = load_snapshot(state_path, tz)
     try:
         with _client(settings) as client:
-            snapshot = fetch_snapshot(client, now)
+            snapshot = fetch_snapshot(client, now, cached)
     except (StudyLifeApiError, httpx.HTTPError) as exc:
         status = exc.status_code if isinstance(exc, StudyLifeApiError) else None
         message = str(exc)
@@ -249,7 +253,7 @@ def refresh_panel(
             )
             return 1
         log.warning("fetch failed (%s), falling back to the cached snapshot", exc)
-        snapshot = load_snapshot(state_path, tz)
+        snapshot = cached
         if snapshot is None:
             log.error("no cached snapshot at %s - showing the error screen", state_path)
             _record(
@@ -306,11 +310,19 @@ def refresh_panel(
             save_snapshot(state_path, snapshot)
         except OSError as exc:
             log.warning("could not cache the snapshot at %s: %s", state_path, exc)
-        _record(state_dir, tz, last_fetch_ok=True, last_fetch_at=now, last_error=None)
+        _record(
+            state_dir,
+            tz,
+            last_fetch_ok=True,
+            last_fetch_at=now,
+            last_error=None,
+            sessions_ok=snapshot.sessions_error is None,
+            sessions_error=snapshot.sessions_error,
+        )
 
     data = build(snapshot, now, tz)
     choice = layout_choice if layout_choice is not None else load_layout_choice(settings)
-    layout = resolve_layout(choice, data)
+    layout = resolve_layout(choice, data, rules_from_settings(settings))
     image = render(data, language, layout)
     if not _put_on_panel(
         settings,
@@ -367,17 +379,17 @@ def command_preview(
         return refresh_panel(settings, layout_choice, output_override=output)
     tz = zone(settings.studylife_timezone)
     now = datetime.now(tz)
-    metrics, history, timer = sample_payloads(now, tz)
-    data = build_dashboard(metrics, history, timer, now, tz)
+    metrics, history, timer, sessions = sample_payloads(now, tz)
+    data = build_dashboard(metrics, history, timer, now, tz, sessions=sessions)
     choice = layout_choice if layout_choice is not None else load_layout_choice(settings)
-    layout = resolve_layout(choice, data)
+    layout = resolve_layout(choice, data, rules_from_settings(settings))
     show(FileDisplay(output), data, settings.display_language, layout)
     log.info("rendered %s (%s) to %s", layout, choice, output)
     return 0
 
 
 def command_check(settings: Settings) -> int:
-    """Calls the three endpoints and prints what the dashboard would be built from."""
+    """Calls the four endpoints and prints what the dashboard would be built from."""
     tz = zone(settings.studylife_timezone)
     now = datetime.now(tz)
     with _client(settings) as client:
@@ -431,10 +443,38 @@ def command_check(settings: Settings) -> int:
         },
         "topics": {"completed": data.topics.completed, "total": data.topics.total},
         "history_sessions": len(snapshot.history),
+        "sessions": len(snapshot.sessions),
+        "sessions_ok": snapshot.sessions_error is None,
+        "sessions_error": snapshot.sessions_error,
+        "agenda": [
+            {
+                "start": item.start.isoformat(),
+                "end": item.end.isoformat(),
+                "course_name": item.course_name,
+                "topic": item.topic,
+                "is_completed": item.is_completed,
+                "is_running_now": item.is_running_now,
+            }
+            for item in data.agenda
+        ],
+        "weekly_report": {
+            "week_id": data.weekly_report.week_id,
+            "hours": data.weekly_report.hours,
+            "delta_vs_previous_week": data.weekly_report.delta_vs_previous_week,
+            "top_course_name": data.weekly_report.top_course_name,
+            "session_count": data.weekly_report.session_count,
+        },
+        "this_week": {
+            "week_id": data.this_week.week_id,
+            "hours": round(data.this_week.hours, 2),
+            "delta_vs_previous_week": round(data.this_week.delta_vs_previous_week, 2),
+            "top_course_name": data.this_week.top_course_name,
+            "session_count": data.this_week.session_count,
+        },
         "heatmap": [[round(h, 2) for h in row] for row in data.heatmap],
         "course_hours": [[name, round(hours, 2)] for name, hours in data.course_hours],
         "layout_choice": choice,
-        "layout": resolve_layout(choice, data),
+        "layout": resolve_layout(choice, data, rules_from_settings(settings)),
         "quiet_hours_active": in_quiet_hours(now, settings.display_quiet_hours),
     }
     print(json.dumps(report, indent=2, ensure_ascii=False))

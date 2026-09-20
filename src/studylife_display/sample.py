@@ -33,7 +33,8 @@ def _naive(moment: datetime) -> str:
 
 def sample_payloads(
     now: datetime, tz: ZoneInfo
-) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    """(metrics, history, timer, sessions) as the four endpoints would return them."""
     today = local_day(now, tz)
     history: list[dict[str, Any]] = []
     session_id = 1
@@ -87,7 +88,14 @@ def sample_payloads(
                 "daysLeft": 23,
             },
         ],
-        "weeklyReport": {"hours": 12.5, "topCourseName": "Betriebssysteme"},
+        # The server's report is always the last COMPLETED Monday-to-Sunday week.
+        "weeklyReport": {
+            "weekId": (today - timedelta(days=7)).strftime("%G-W%V"),
+            "hours": 12.5,
+            "deltaVsPreviousWeek": 2.5,
+            "topCourseName": "Betriebssysteme",
+            "sessionCount": 7,
+        },
         "ects": {"earned": 65, "total": 180},
         "averageGrade": 2.3,
         "forecast": {
@@ -121,4 +129,52 @@ def sample_payloads(
         "updatedAt": _naive(now.astimezone(tz) - timedelta(minutes=7)),
         "serverNow": _naive(now.astimezone(tz)),
     }
-    return metrics, history, timer
+
+    # Today's plan for the agenda layout: (start, end, course index, topic, completed). The
+    # first is at a fixed hour of the day; the others hang off `now` so that one is always
+    # running and two still ahead, whatever time the preview is rendered.
+    local_now = now.astimezone(tz)
+    morning = datetime.combine(today, datetime.min.time(), tzinfo=tz) + timedelta(hours=8)
+    plan = [
+        (morning, morning + timedelta(minutes=90), 1, "Kapitel 3", True),
+        (
+            local_now - timedelta(minutes=45),
+            local_now + timedelta(minutes=45),
+            0,
+            "Scheduling",
+            False,
+        ),
+        (
+            local_now + timedelta(hours=1, minutes=15),
+            local_now + timedelta(hours=2, minutes=15),
+            2,
+            "SQL-Joins",
+            False,
+        ),
+        (
+            local_now + timedelta(hours=3, minutes=15),
+            local_now + timedelta(hours=4, minutes=15),
+            1,
+            "Übungsblatt 5",
+            False,
+        ),
+    ]
+    sessions: list[dict[str, Any]] = []
+    for index, (start, end, course, topic, completed) in enumerate(plan, start=500):
+        course_name, colour = _COURSES[course]
+        sessions.append(
+            {
+                "id": index,
+                "courseId": course + 1,
+                "courseName": course_name,
+                "courseColor": colour,
+                "startTime": _naive(start),
+                "endTime": _naive(end),
+                "topic": topic,
+                "notes": None,
+                "isCompleted": completed,
+                "timerModeId": 1,
+                "recurrenceGroupId": None,
+            }
+        )
+    return metrics, history, timer, sessions

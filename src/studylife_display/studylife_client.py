@@ -1,16 +1,30 @@
-"""Typed sync client for exactly the three read-only endpoints this display needs.
+"""Typed sync client for exactly the four read-only endpoints this display needs.
 
-Every method corresponds to one scope the API key must carry (see the README), and nothing
-here reaches an endpoint outside that set - a call added without the matching scope
+Every method corresponds to one scope the API key must carry (SCOPES, see the README), and
+nothing here reaches an endpoint outside that set - a call added without the matching scope
 authenticates fine and then fails with 403 on every request, which is a confusing way to find
 out.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+# The scopes the key must carry, one per endpoint below, in the order the README lists them.
+SCOPES = ("Metrics.GetSummary", "Sessions.GetAll", "Sessions.GetHistory", "TimerState.Get")
+
+
+@dataclass(frozen=True)
+class SessionsPage:
+    """What `list_sessions` returns: the sessions, the ETag the server stamped on them, and
+    whether the server answered 304 (then `items` is empty and the caller keeps its copy)."""
+
+    items: list[dict[str, Any]]
+    etag: str | None
+    not_modified: bool = False
 
 
 class StudyLifeApiError(Exception):
@@ -60,3 +74,15 @@ class StudyLifeClient:
 
     def get_timer_state(self) -> dict[str, Any]:
         return dict(self._request("GET", "/api/timerstate").json())
+
+    def list_sessions(self, etag: str | None = None) -> SessionsPage:
+        """Every session, planned ones included - the endpoint has no query parameters. The
+        agenda layout picks today's out of it. The server hashes the body into an ETag and
+        answers 304 to a matching `If-None-Match`, so a poll every five minutes costs no body
+        while nothing changed; pass the ETag of the previous answer to use that."""
+        headers = {"If-None-Match": etag} if etag else None
+        response = self._request("GET", "/api/sessions", headers=headers)
+        new_etag = response.headers.get("ETag")
+        if response.status_code == 304:
+            return SessionsPage(items=[], etag=new_etag or etag, not_modified=True)
+        return SessionsPage(items=list(response.json()), etag=new_etag)
