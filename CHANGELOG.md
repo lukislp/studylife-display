@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/lukislp/studylife-display/compare/v1.5.0...v1.6.0) (2026-09-21)
+
+
+### Features
+
+* agenda layout from today's sessions and a weekly review in auto mode ([f4dbf9f](https://github.com/lukislp/studylife-display/commit/f4dbf9fca0f3018782bc31f797e6c115a2b7c016))
+
 # [1.5.0](https://github.com/lukislp/studylife-display/compare/v1.4.3...v1.5.0) (2026-09-20)
 
 
