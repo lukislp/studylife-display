@@ -288,6 +288,7 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 | `DISPLAY_QUIET_HOURS` | – | `HH-HH` or `HH:MM-HH:MM`, may wrap past midnight (`23-7`); no scheduled refresh inside. Empty = off (*web*) |
 | `DISPLAY_CLEAR_AT` | `04:00` | Time of the daily full clear against ghosting; empty = off (*web*) |
 | `DISPLAY_UPDATE_CHECK` | `false` | Let the web interface ask GitHub (once per 6 h) whether a newer release exists (*web*) |
+| `DISPLAY_AUTO_UPDATE` | `false` | Let `studylife-display-update.timer` install a newer release once a day, unattended; see [Updating](#updating) |
 | `DISPLAY_LAYOUT` | `auto` | `auto`, `classic`, `focus`, `exam`, `week`, `semester`, `agenda` or `review`; overridden by the choice made in the web interface |
 | `DISPLAY_AUTO_REVIEW` | `sun 18-24` | Window of the `review` rule in `auto`: `[weekdays] HH-HH` or `HH:MM-HH:MM` (`24` = midnight, no wrap past midnight); empty = rule off (*web*) |
 | `DISPLAY_AUTO_AGENDA` | `06-12` | Window of the `agenda` rule in `auto`, same notation; empty = rule off (*web*) |
@@ -412,6 +413,13 @@ sudo raspi-config nonint enable_overlayfs && sudo reboot
 `--force` runs it anyway, for a test that may be gone tomorrow. `--check` is fine with the
 overlay on (it changes nothing), so a cron line or the web footer's update hint
 (`DISPLAY_UPDATE_CHECK=true`) can tell you when the three steps are worth it.
+
+`studylife-display-update.timer` runs `update.sh` once a day (03:00, spread over an hour) but
+does nothing unless `DISPLAY_AUTO_UPDATE=true` is set in the environment file - off by
+default, since nothing should change on its own without asking. Turning it on is enough;
+`update.sh` is a no-op when already on the latest release, so most days it changes nothing.
+With the overlay filesystem on, the daily run just logs the same "overlay filesystem is on"
+refusal `--check` would (see above) - it will not brick anything, it just never updates.
 
 ### Quiet hours and the daily clear
 

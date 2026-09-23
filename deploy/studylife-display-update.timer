@@ -1,0 +1,13 @@
+[Unit]
+Description=Check for a newer studylife-display release once a day (opt-in, see the service)
+
+[Timer]
+# Once a day, spread over an hour so not every install hits the GitHub API at the same
+# minute. Persistent=true catches up a missed day after the Pi was off at 03:00.
+OnCalendar=03:00
+RandomizedDelaySec=1h
+Persistent=true
+Unit=studylife-display-update.service
+
+[Install]
+WantedBy=timers.target

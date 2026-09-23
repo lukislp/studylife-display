@@ -212,6 +212,9 @@ STUDYLIFE_TIMEZONE=Europe/Berlin
 # DISPLAY_STALE_ERROR_HOURS=24
 # Let the web interface ask GitHub (once per 6 h) whether a newer release exists.
 # DISPLAY_UPDATE_CHECK=false
+# Automatically install a newer release once a day (studylife-display-update.timer); off by
+# default, deploy/update.sh is a no-op when already current, so this is safe to turn on.
+# DISPLAY_AUTO_UPDATE=false
 EOF
     if [ "$PERSIST_PATH" != "$DEFAULT_PERSIST_PATH" ]; then
       printf 'DISPLAY_PERSIST_PATH=%s\n' "$PERSIST_PATH"
@@ -245,6 +248,8 @@ install -m 0644 "$SRC/deploy/studylife-display-persist.service" /etc/systemd/sys
 install -m 0644 "$SRC/deploy/studylife-display-persist.path" /etc/systemd/system/
 install -m 0644 "$SRC/deploy/studylife-display-credentials.service" /etc/systemd/system/
 install -m 0644 "$SRC/deploy/studylife-display-credentials.path" /etc/systemd/system/
+install -m 0644 "$SRC/deploy/studylife-display-update.service" /etc/systemd/system/
+install -m 0644 "$SRC/deploy/studylife-display-update.timer" /etc/systemd/system/
 systemctl daemon-reload
 # Restore first (a stored choice from before this run, e.g. after a reflash), then the units
 # that read it. `restart` runs the oneshot again on a re-run; it is a no-op when the state
@@ -255,6 +260,7 @@ systemctl restart studylife-display-restore.service \
 systemctl enable --now studylife-display-persist.path
 systemctl enable --now studylife-display-credentials.path
 systemctl enable --now studylife-display.timer
+systemctl enable --now studylife-display-update.timer
 systemctl enable --now studylife-display-web.service
 # A re-run has just reinstalled the package: pick the new code up right away.
 systemctl restart studylife-display-web.service || true

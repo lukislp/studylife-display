@@ -1,0 +1,15 @@
+[Unit]
+Description=Auto-update studylife-display to the latest GitHub release (opt-in)
+Documentation=https://github.com/lukislp/studylife-display
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/studylife-display.env
+# Off by default: skipped (not failed - ExecCondition= exiting non-zero is not a service
+# failure) unless DISPLAY_AUTO_UPDATE=true is set in the environment file. deploy/update.sh
+# is itself a no-op when the installed release is already the latest, so a daily run that
+# finds nothing new does not restart anything or touch the panel.
+ExecCondition=/bin/sh -c '[ "${DISPLAY_AUTO_UPDATE:-false}" = "true" ]'
+ExecStart=/usr/bin/bash /opt/studylife-display/src/deploy/update.sh

@@ -48,3 +48,14 @@ def test_install_script_checks_out_a_release_by_default() -> None:
     assert "--main" in text
     assert "fetch --tags" in text
     assert "--sort=-version:refname" in text
+
+
+def test_auto_update_is_off_by_default_and_wired_into_both_scripts() -> None:
+    service = (DEPLOY / "studylife-display-update.service").read_text(encoding="utf-8")
+    timer = (DEPLOY / "studylife-display-update.timer").read_text(encoding="utf-8")
+    assert 'ExecCondition=/bin/sh -c \'[ "${DISPLAY_AUTO_UPDATE:-false}" = "true" ]\'' in service
+    assert "ExecStart=/usr/bin/bash /opt/studylife-display/src/deploy/update.sh" in service
+    assert "Unit=studylife-display-update.service" in timer
+    for script in ("install.sh", "update.sh"):
+        text = (DEPLOY / script).read_text(encoding="utf-8")
+        assert "studylife-display-update.timer" in text
