@@ -47,10 +47,31 @@ echo "==> system packages (Pillow runtime, git, venv, lgpio build/runtime)"
 apt-get update
 # swig and liblgpio-dev are needed to build the `lgpio` Python package's C extension (it has
 # no prebuilt wheel for this platform); liblgpio-dev pulls in the liblgpio1 runtime library.
-apt-get install -y python3-venv python3-pip git libopenjp2-7 fonts-dejavu-core swig liblgpio-dev
+apt-get install -y python3-venv python3-pip git libopenjp2-7 fonts-dejavu-core swig liblgpio-dev \
+  openssl
 
 echo "==> enabling SPI (the HAT is driven over SPI0)"
 raspi-config nonint do_spi 0
+
+TLS_CERT=/etc/studylife-display-tls.pem
+TLS_KEY=/etc/studylife-display-tls.key
+if [ ! -f "$TLS_CERT" ] || [ ! -f "$TLS_KEY" ]; then
+  echo "==> self-signed TLS certificate for DISPLAY_TLS=true ($TLS_CERT)"
+  # Not for trust (it is self-signed; browsers show the interstitial once regardless) - only
+  # for StudyLife's redirect-URI policy, which accepts https from anywhere but plain http
+  # only from localhost. 10 years so nobody has to think about renewing it; the mDNS name
+  # covers the URL everything else on this Pi already uses (the setup screen's QR code, the
+  # suggested DISPLAY_PUBLIC_BASE_URL). IP SANs are not worth it - a DHCP lease can change.
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650 \
+    -subj "/CN=$(hostname).local" \
+    -addext "subjectAltName=DNS:$(hostname).local,DNS:$(hostname)" \
+    -keyout "$TLS_KEY" -out "$TLS_CERT"
+  chown root:"$SERVICE_USER" "$TLS_KEY"
+  chmod 0640 "$TLS_KEY"
+  chmod 0644 "$TLS_CERT"
+else
+  echo "==> keeping existing TLS certificate ($TLS_CERT)"
+fi
 
 echo "==> source checkout at $SRC"
 mkdir -p "$PREFIX"
@@ -193,8 +214,13 @@ STUDYLIFE_TIMEZONE=Europe/Berlin
 # DISPLAY_AUTO_AGENDA=06-12
 # Web interface: bind address and the access token asked for on its login page.
 # DISPLAY_WEB_BIND=0.0.0.0:8795
-# Optional https URL of this web interface (a Tailscale name, say): StudyLife then
-# redirects straight back to <url>/connect/callback when connecting the account.
+# Serve the web interface over https, with the self-signed certificate this script just
+# generated (or kept) at /etc/studylife-display-tls.pem. Needed for DISPLAY_PUBLIC_BASE_URL
+# below to work without a separate reverse proxy or Tailscale.
+# DISPLAY_TLS=false
+# Optional https URL of this web interface (a Tailscale name, or this Pi's own address with
+# DISPLAY_TLS=true above): StudyLife then redirects straight back to <url>/connect/callback
+# when connecting the account, e.g. https://<hostname>.local:8795
 # DISPLAY_PUBLIC_BASE_URL=
 # Optional exact URL for the setup screen's QR code; empty derives it from the hostname
 # (http://<hostname>.local:8795/connect) or from DISPLAY_PUBLIC_BASE_URL.

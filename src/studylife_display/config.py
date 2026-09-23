@@ -158,6 +158,14 @@ class Settings(BaseSettings):
     display_web_bind: str = "0.0.0.0:8795"
     display_web_token: str = ""
 
+    # Serve the web interface itself over https, with the self-signed certificate
+    # deploy/install.sh generates at TLS_CERT_PATH/TLS_KEY_PATH (see web.py). Off by default:
+    # a self-signed certificate still shows the browser's "not private" interstitial once,
+    # which is a worse first impression than plain http for someone just testing the panel.
+    # Turning it on is what makes DISPLAY_PUBLIC_BASE_URL below usable without a separate
+    # reverse proxy or Tailscale - StudyLife requires https for a non-loopback redirect URI.
+    display_tls: bool = False
+
     # Optional: an https URL under which this web interface is reachable (a Tailscale name,
     # say). When set, the connect page lets StudyLife redirect straight back to
     # `<url>/connect/callback`; without it the browser lands on a localhost URL the person
