@@ -137,7 +137,13 @@ EOF
   git -C "$SRC" checkout --force --detach --quiet "$target"
 
   echo "==> installing the package into $VENV"
-  "$VENV/bin/pip" install --upgrade "$SRC[pi]"
+  # Same reasoning as install.sh: pip's git clone of the Waveshare vendor repo (part of the
+  # `pi` extra) lands in TMPDIR/$TMPDIR by default, i.e. /tmp - a tmpfs sized from RAM. On a
+  # 512 MB board (Pi 3 A+) that is far smaller than the repo, so the clone fails part-way with
+  # "unable to write file" for unrelated files.
+  mkdir -p "$PREFIX/tmp"
+  TMPDIR="$PREFIX/tmp" "$VENV/bin/pip" install --upgrade "$SRC[pi]"
+  rm -rf "$PREFIX/tmp"
 
   echo "==> systemd units"
   local unit
