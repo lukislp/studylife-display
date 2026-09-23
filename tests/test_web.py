@@ -203,7 +203,19 @@ class TestPreviews:
         assert status == 403
 
     @pytest.mark.parametrize(
-        "key", ["auto", "classic", "focus", "exam", "week", "semester", "agenda", "review"]
+        "key",
+        [
+            "auto",
+            "classic",
+            "focus",
+            "exam",
+            "week",
+            "semester",
+            "agenda",
+            "review",
+            "courses",
+            "milestone",
+        ],
     )
     def test_preview_is_an_800x480_png(self, client: Client, key: str) -> None:
         client.login()

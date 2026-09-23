@@ -177,6 +177,27 @@ class TestLayouts:
         assert names == ["Lineare Algebra", "Datenbanken", "Betriebssysteme"]
         assert hours == sorted(hours, reverse=True)
 
+    def test_courses_shows_the_total_and_falls_back_when_empty(self, data: DashboardData) -> None:
+        assert sum(hours for _, hours in data.course_hours) > 0
+        image = render(data, "de", "courses")
+        empty = render(replace(data, course_hours=()), "de", "courses")
+        assert differing_fraction(image, empty) > 0.0
+
+    def test_milestone_only_flags_round_numbers(self) -> None:
+        from studylife_display.layouts.milestone import is_milestone
+
+        for days in (7, 30, 100, 365):
+            assert is_milestone(days)
+        for days in (0, 1, 6, 8, 29, 31, 99, 366):
+            assert not is_milestone(days)
+
+    def test_auto_prefers_milestone_over_exam(self, data: DashboardData) -> None:
+        from studylife_display.layouts.auto import resolve_layout
+
+        milestone_day = replace(data, streak_days=100)
+        assert milestone_day.next_goal is not None  # exam would otherwise win
+        assert resolve_layout("auto", milestone_day) == "milestone"
+
     def test_agenda_inverts_the_next_row_only(self, data: DashboardData) -> None:
         # Sample: row 0 is done, row 1 is running at 16:45 -> that one is inverted.
         image = render(data, "de", "agenda")
@@ -249,6 +270,8 @@ class TestGoldens:
             ("semester", "de"),
             ("agenda", "de"),
             ("review", "de"),
+            ("courses", "de"),
+            ("milestone", "de"),
         ],
     )
     def test_matches_golden(

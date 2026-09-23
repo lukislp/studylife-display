@@ -12,7 +12,17 @@ from dataclasses import dataclass
 
 from PIL import Image
 
-from studylife_display.layouts import agenda, classic, exam, focus, review, semester, week
+from studylife_display.layouts import (
+    agenda,
+    classic,
+    courses,
+    exam,
+    focus,
+    milestone,
+    review,
+    semester,
+    week,
+)
 from studylife_display.model import DashboardData
 
 Renderer = Callable[[DashboardData, str], Image.Image]
@@ -109,6 +119,36 @@ LAYOUTS: dict[str, LayoutSpec] = {
                 ),
             },
             render=agenda.render,
+        ),
+        LayoutSpec(
+            key="courses",
+            name={"de": "Kursverteilung", "en": "Course breakdown"},
+            description={
+                "de": (
+                    "Stunden je Kurs (28 Tage) als große Balken über den ganzen Rahmen, "
+                    "mit der Gesamtsumme oben; nie automatisch gewählt."
+                ),
+                "en": (
+                    "Hours per course (28 days) as large bars across the whole frame, with "
+                    "the total up top; never picked automatically."
+                ),
+            },
+            render=courses.render,
+        ),
+        LayoutSpec(
+            key="milestone",
+            name={"de": "Serien-Meilenstein", "en": "Streak milestone"},
+            description={
+                "de": (
+                    "Die Serie riesig, für einen Feiertag: nur automatisch gewählt, wenn sie "
+                    "heute eine runde Zahl erreicht (7, 30, 100, ...)."
+                ),
+                "en": (
+                    "The streak, huge, for a celebration: only picked automatically on the "
+                    "day it hits a round number (7, 30, 100, ...)."
+                ),
+            },
+            render=milestone.render,
         ),
         LayoutSpec(
             key="review",

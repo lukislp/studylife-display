@@ -44,6 +44,8 @@ empty = no session, light hatch = under 1 h, dense hatch = under 2.5 h, solid = 
 | `semester` | ECTS earned of total as a big number with a progress bar, the average grade (or "noch keine Note"), the expected graduation date ("nicht verfügbar" / "abgeschlossen"), the course that has gone longest without a session (or "alle Kurse aktiv"), topics completed of total, and the programme name. Never picked by `auto`; all of it from `metrics/summary` (`ects`, `averageGrade`, `forecast`, `neglectedCourse`, `topics`) | ![semester](docs/preview-semester.png) |
 | `agenda` | Today's plan: the sessions planned for today from `GET /api/sessions` (up to six rows of `HH:MM–HH:MM`, course and topic; completed ones ticked, the running or next one inverted like the exam countdown, "+N weitere" when there are more, "keine Sessions geplant" when there are none), with today's hours, the streak and the next exam in a column on the right and the timer (or the week target) at the bottom. Empty when the key lacks the `Sessions.GetAll` scope | ![agenda](docs/preview-agenda.png) |
 | `review` | The weekly review: this week's hours large with the change against the week before (sign and an up/down marker), the course studied most, the session count and the streak on the right, the seven days Monday to Sunday as small bars, and StudyLife's own `weeklyReport` of the previous week in the footer. The hero figures are summed on the Pi from the session history for the current week, because the server's report always describes the last *completed* week | ![review](docs/preview-review.png) |
+| `courses` | Hours per course over the last 28 days as the whole frame - the same bar chart `exam` fits under its countdown block, given the full canvas and up to 9 rows, with the summed total as a small hero line up top. Never picked by `auto` | ![courses](docs/preview-courses.png) |
+| `milestone` | A celebration screen for the streak: the day count, huge, under "SERIEN-MEILENSTEIN" / "STREAK MILESTONE". `auto` only ever picks it on the one day the streak actually hits a round number (7, 14, 21, 30, 50, 100, 150, 200, 250, 300, 365, 500, 750, 1000); picking it by hand always shows today's real streak | ![milestone](docs/preview-milestone.png) |
 
 Every layout keeps the header line (date, "aktualisiert HH:MM" and the stale marker), because
 that line is the only way to tell an old frame from a fresh one.
@@ -53,17 +55,20 @@ error screens are decided before any of them):
 
 1. `review` inside the review window - by default **Sunday 18:00 to 24:00**
    (`DISPLAY_AUTO_REVIEW=sun 18-24`);
-2. otherwise `exam` when the next course goal is due in **7 days or fewer** (today, overdue
+2. otherwise `milestone` on the one day the streak hits a round number (see the table above) -
+   rare enough, and worth seeing right away, that it outranks even an exam countdown;
+3. otherwise `exam` when the next course goal is due in **7 days or fewer** (today, overdue
    and negative counts included);
-3. otherwise `focus` while a timer is running;
-4. otherwise `agenda` while at least one session planned for today has not ended yet and the
+4. otherwise `focus` while a timer is running;
+5. otherwise `agenda` while at least one session planned for today has not ended yet and the
    time is inside the agenda window - by default **06:00 to 12:00** (`DISPLAY_AUTO_AGENDA=06-12`);
-5. otherwise `classic`.
+6. otherwise `classic`.
 
 The two windows use the quiet-hours notation with an optional list of weekdays in front
 (`sun`, `sat,sun`, `mon-fri`; `24` is allowed as the end, a window may not wrap past
 midnight) and can be changed on the settings page; an empty window switches that rule off.
-`semester` is never chosen automatically: it is the view to switch to on purpose. The
+`semester` and `courses` are never chosen automatically: they are views to switch to on
+purpose. The
 choice comes from, in order of precedence, `settings.json` next to the cached snapshot
 (written by the web interface) and the `DISPLAY_LAYOUT` variable. Switching layouts is a full
 refresh of the panel like every other update. `studylife-display preview --sample --layout
@@ -298,7 +303,7 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 | `DISPLAY_CLEAR_AT` | `04:00` | Time of the daily full clear against ghosting; empty = off (*web*) |
 | `DISPLAY_UPDATE_CHECK` | `false` | Let the web interface ask GitHub (once per 6 h) whether a newer release exists (*web*) |
 | `DISPLAY_AUTO_UPDATE` | `false` | Let `studylife-display-update.timer` install a newer release once a day, unattended; see [Updating](#updating) |
-| `DISPLAY_LAYOUT` | `auto` | `auto`, `classic`, `focus`, `exam`, `week`, `semester`, `agenda` or `review`; overridden by the choice made in the web interface |
+| `DISPLAY_LAYOUT` | `auto` | `auto`, `classic`, `focus`, `exam`, `week`, `semester`, `agenda`, `review`, `courses` or `milestone`; overridden by the choice made in the web interface |
 | `DISPLAY_AUTO_REVIEW` | `sun 18-24` | Window of the `review` rule in `auto`: `[weekdays] HH-HH` or `HH:MM-HH:MM` (`24` = midnight, no wrap past midnight); empty = rule off (*web*) |
 | `DISPLAY_AUTO_AGENDA` | `06-12` | Window of the `agenda` rule in `auto`, same notation; empty = rule off (*web*) |
 | `DISPLAY_PERSIST_PATH` | `/boot/firmware/studylife-display/settings.json` | Copy of the web interface's choice on the boot partition, restored at boot (see [SD-card protection](#sd-card-protection)); empty disables it |

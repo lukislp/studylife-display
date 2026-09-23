@@ -44,8 +44,10 @@ def test_valid_choices_are_the_layouts_plus_auto() -> None:
     assert valid_choices() == {
         "auto",
         "classic",
+        "courses",
         "focus",
         "exam",
+        "milestone",
         "week",
         "semester",
         "agenda",
