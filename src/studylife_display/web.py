@@ -1344,6 +1344,7 @@ def make_server(
     server = DisplayServer(parse_bind(bind or settings.display_web_bind), WebApp(settings, refresh))
     if settings.display_tls:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.load_cert_chain(TLS_CERT_PATH, TLS_KEY_PATH)
         server.socket = ctx.wrap_socket(server.socket, server_side=True)
     return server
