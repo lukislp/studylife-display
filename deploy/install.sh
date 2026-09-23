@@ -131,7 +131,24 @@ suggest_token() {
 }
 
 if [ ! -f "$ENV_FILE" ]; then
-  echo "==> writing template $ENV_FILE (fill in the URL and key!)"
+  echo "==> writing template $ENV_FILE (fill in the key!)"
+  PLACEHOLDER_URL="https://studylife.example.com"
+  STUDYLIFE_URL="$PLACEHOLDER_URL"
+  if [ -t 0 ]; then
+    echo
+    echo "StudyLife instance URL (the server this display reads from):"
+    while :; do
+      printf 'STUDYLIFE_BASE_URL [e.g. https://studylife.example.com]: '
+      IFS= read -r STUDYLIFE_URL
+      case "$STUDYLIFE_URL" in
+        http://*|https://*) break ;;
+        *) echo "needs to start with http:// or https://, please" ;;
+      esac
+    done
+  else
+    # No terminal (unattended install): leave the placeholder; edit the env file afterwards.
+    echo "    no terminal attached, leaving STUDYLIFE_BASE_URL as a placeholder"
+  fi
   # The web interface's access token is chosen by the person installing, never by the
   # code: suggest a random one, let Enter accept it or a typed value replace it, and never
   # print the final value back (it goes into the root-owned env file only).
@@ -160,7 +177,9 @@ if [ ! -f "$ENV_FILE" ]; then
 # StudyLife instance. The READ-ONLY API key (scopes Metrics.GetSummary, Sessions.GetAll,
 # Sessions.GetHistory, TimerState.Get) is filled in by the web interface's connect page
 # (http://<hostname>.local:8795/connect); pasting one here by hand works too.
-STUDYLIFE_BASE_URL=https://studylife.example.com
+EOF
+    printf 'STUDYLIFE_BASE_URL=%s\n' "$STUDYLIFE_URL"
+    cat <<'EOF'
 STUDYLIFE_API_KEY=
 # Time zone of the StudyLife SERVER (its timestamps carry no offset).
 STUDYLIFE_TIMEZONE=Europe/Berlin
@@ -240,7 +259,11 @@ systemctl enable --now studylife-display-web.service
 # A re-run has just reinstalled the package: pick the new code up right away.
 systemctl restart studylife-display-web.service || true
 
-cat <<EOF
+# The URL prompt above already wrote a real STUDYLIFE_BASE_URL for a fresh, interactive
+# install; anything else (unattended install, or a pre-existing env file) still has the
+# placeholder and needs the manual-edit step spelled out.
+if grep -q '^STUDYLIFE_BASE_URL=https://studylife\.example\.com$' "$ENV_FILE" 2>/dev/null; then
+  cat <<EOF
 
 Installed. Next steps:
   1. sudo nano $ENV_FILE            # STUDYLIFE_BASE_URL
@@ -250,6 +273,19 @@ Installed. Next steps:
      or put the key into $ENV_FILE by hand and run
      sudo systemctl start studylife-display.service
   4. journalctl -u studylife-display.service -n 50
+EOF
+else
+  cat <<EOF
+
+Installed. Next steps:
+  1. http://$(hostname).local:8795/connect   # connect the account (no key to copy);
+     the panel shows this URL as a QR code until a key is applied
+     or put the key into $ENV_FILE by hand and run
+     sudo systemctl start studylife-display.service
+  2. journalctl -u studylife-display.service -n 50
+EOF
+fi
+cat <<EOF
 The timer refreshes the panel every 5 minutes: systemctl list-timers studylife-display.timer
 Layouts are switched in the web interface:  http://$(hostname).local:8795/
   (journalctl -u studylife-display-web.service -n 50 if it does not answer)
