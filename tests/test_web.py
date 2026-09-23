@@ -293,6 +293,15 @@ class TestActions:
         )
         assert status == 303
 
+    def test_referrer_policy_keeps_same_origin_headers_intact(self, client: Client) -> None:
+        """A "no-referrer" policy makes real browsers send Origin: null on the very same-origin
+        form POSTs test_cross_site_post_is_a_403 checks above, which failed on real hardware in
+        Chrome even though this suite's Client always sets a real Origin. "same-origin" still
+        keeps the page's URL from leaking to StudyLife."""
+        client.login()
+        _, headers, _ = client.request("GET", "/")
+        assert headers["referrer-policy"] == "same-origin"
+
     def test_unknown_paths_are_404(self, client: Client) -> None:
         assert client.request("GET", "/admin")[0] == 404
         client.login()

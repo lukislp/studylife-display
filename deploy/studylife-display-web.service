@@ -7,7 +7,7 @@ Wants=network-online.target studylife-display-restore.service
 [Service]
 Type=simple
 User=pi
-SupplementalGroups=spi gpio
+SupplementaryGroups=spi gpio
 EnvironmentFile=/etc/studylife-display.env
 ExecStart=/opt/studylife-display/venv/bin/studylife-display serve
 Restart=on-failure
@@ -21,6 +21,9 @@ TimeoutStopSec=20
 # snapshot plus settings.json.
 ProtectSystem=strict
 ReadWritePaths=/var/lib/studylife-display
+# See studylife-display.service: lgpio needs a writable current working directory or it
+# fails init and gpiozero falls back to the broken legacy sysfs pin factory.
+WorkingDirectory=/var/lib/studylife-display
 PrivateTmp=yes
 NoNewPrivileges=yes
 ProtectHome=yes
