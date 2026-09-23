@@ -55,7 +55,7 @@ from studylife_display.status_store import (
 )
 from studylife_display.studylife_client import StudyLifeApiError, StudyLifeClient
 from studylife_display.times import zone
-from studylife_display.web import MIN_TOKEN_LENGTH, serve_web
+from studylife_display.web import MIN_TOKEN_LENGTH, TLS_CERT_PATH, TLS_KEY_PATH, serve_web
 
 log = logging.getLogger("studylife_display")
 
@@ -539,6 +539,13 @@ def command_serve(settings: Settings) -> int:
             "file before starting the web interface",
             "empty" if not settings.display_web_token else "too short",
             MIN_TOKEN_LENGTH,
+        )
+        return 2
+    if settings.display_tls and not (Path(TLS_CERT_PATH).exists() and Path(TLS_KEY_PATH).exists()):
+        log.error(
+            "DISPLAY_TLS=true but %s and/or %s do not exist; deploy/install.sh generates them",
+            TLS_CERT_PATH,
+            TLS_KEY_PATH,
         )
         return 2
     return serve_web(settings, make_serve_refresh(settings))

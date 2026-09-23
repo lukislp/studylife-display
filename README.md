@@ -159,12 +159,21 @@ The `Verbinden` page obtains the API key through StudyLife's consent flow (the s
    left the Pi, so the pasted URL alone is worth nothing to anyone else) and receives the
    key.
 
-With an https name for the web interface (`DISPLAY_PUBLIC_BASE_URL=https://pi.tail.example.ts.net`,
-a Tailscale name say), step 3 disappears: the redirect URI becomes
-`<that>/connect/callback`, the web interface handles it directly, and the page says so.
-That URI has to be registered on the client as well. An SSH port forward
-(`ssh -L 8795:localhost:8795 pi@<hostname>`) has the same effect for the loopback URI, since
-`localhost:8795` in your browser then *is* the Pi.
+With an https name for the web interface, step 3 disappears: the redirect URI becomes
+`<that>/connect/callback`, the web interface handles it directly, and the page says so. That
+URI has to be registered on the client as well. Two ways to get an https name:
+
+- `DISPLAY_TLS=true` serves the web interface itself over https, with the self-signed
+  certificate `deploy/install.sh` generates at `/etc/studylife-display-tls.pem`. Set
+  `DISPLAY_PUBLIC_BASE_URL=https://<hostname>.local:8795` (the same name the certificate
+  covers) alongside it. The browser still shows the self-signed interstitial once; that is
+  expected, nothing else needed - no separate infrastructure, works on any LAN.
+- A Tailscale name (`DISPLAY_PUBLIC_BASE_URL=https://pi.tail.example.ts.net`) or any other
+  reverse proxy terminating real TLS in front of the Pi. `DISPLAY_TLS` stays off in that case
+  - the proxy is the one speaking https, not this process.
+
+An SSH port forward (`ssh -L 8795:localhost:8795 pi@<hostname>`) has the same effect for the
+loopback URI instead, since `localhost:8795` in your browser then *is* the Pi.
 
 The key never reaches the browser. The web service (unprivileged) writes it to
 `credentials.pending.json` in the state directory, readable by `pi` only;
@@ -295,7 +304,8 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 | `DISPLAY_PERSIST_PATH` | `/boot/firmware/studylife-display/settings.json` | Copy of the web interface's choice on the boot partition, restored at boot (see [SD-card protection](#sd-card-protection)); empty disables it |
 | `DISPLAY_WEB_BIND` | `0.0.0.0:8795` | Where `serve` listens |
 | `DISPLAY_WEB_TOKEN` | – | Access token of the web interface, at least 12 characters; `serve` refuses to start without one |
-| `DISPLAY_PUBLIC_BASE_URL` | – | Optional https URL under which the web interface is reachable (a Tailscale name); the connect flow then redirects straight back to `<url>/connect/callback`. Must be registered on the client too |
+| `DISPLAY_TLS` | `false` | Serve the web interface over https with the self-signed certificate `deploy/install.sh` generates. Pairs with `DISPLAY_PUBLIC_BASE_URL` below; see [Connecting the account](#connecting-the-account) |
+| `DISPLAY_PUBLIC_BASE_URL` | – | Optional https URL under which the web interface is reachable (`DISPLAY_TLS=true` plus this Pi's own name, or a Tailscale name); the connect flow then redirects straight back to `<url>/connect/callback`. Must be registered on the client too |
 | `DISPLAY_SETUP_URL` | – | Optional: the exact URL the [setup screen](#setup-screen) shows and encodes in its QR code. Empty derives it from `DISPLAY_PUBLIC_BASE_URL` or the hostname and `DISPLAY_WEB_BIND` |
 | `HTTP_TIMEOUT_SECONDS` | `10` | Per request |
 

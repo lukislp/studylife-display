@@ -11,6 +11,8 @@ import http.client
 import io
 import json
 import re
+import ssl
+import subprocess
 import threading
 from collections.abc import Iterator
 from dataclasses import replace
@@ -335,6 +337,67 @@ class TestServeCommand:
         monkeypatch.setenv("DISPLAY_WEB_TOKEN", TOKEN)
         monkeypatch.setattr(main_module, "serve_web", lambda settings, refresh: 0)
         assert main(["serve"]) == 0
+
+    def test_serve_refuses_tls_without_certificate_files(
+        self, env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("DISPLAY_WEB_TOKEN", TOKEN)
+        monkeypatch.setenv("DISPLAY_TLS", "true")
+        monkeypatch.setattr(main_module, "TLS_CERT_PATH", str(tmp_path / "missing.pem"))
+        monkeypatch.setattr(main_module, "TLS_KEY_PATH", str(tmp_path / "missing.key"))
+        assert main(["serve"]) != 0
+
+
+class TestTls:
+    @pytest.fixture
+    def cert_and_key(self, tmp_path: Path) -> tuple[Path, Path]:
+        cert, key = tmp_path / "cert.pem", tmp_path / "key.pem"
+        subprocess.run(
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "ec",
+                "-pkeyopt",
+                "ec_paramgen_curve:prime256v1",
+                "-nodes",
+                "-days",
+                "1",
+                "-subj",
+                "/CN=test.local",
+                "-keyout",
+                str(key),
+                "-out",
+                str(cert),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return cert, key
+
+    def test_make_server_wraps_the_socket_in_tls_when_enabled(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cert_and_key: tuple[Path, Path]
+    ) -> None:
+        cert, key = cert_and_key
+        monkeypatch.setattr(web_module, "TLS_CERT_PATH", str(cert))
+        monkeypatch.setattr(web_module, "TLS_KEY_PATH", str(key))
+        settings = make_settings(tmp_path, display_tls=True)
+        server = web_module.make_server(settings, lambda: 0, bind="127.0.0.1:0")
+        try:
+            assert isinstance(server.socket, ssl.SSLSocket)
+        finally:
+            server.server_close()
+
+    def test_make_server_leaves_a_plain_socket_when_disabled(
+        self, tmp_path: Path, cert_and_key: tuple[Path, Path]
+    ) -> None:
+        settings = make_settings(tmp_path, display_tls=False)
+        server = web_module.make_server(settings, lambda: 0, bind="127.0.0.1:0")
+        try:
+            assert not isinstance(server.socket, ssl.SSLSocket)
+        finally:
+            server.server_close()
 
 
 def fresh_cache(settings: Settings, sample: Any, tz: ZoneInfo, ok: bool = True) -> datetime:

@@ -32,6 +32,7 @@ import io
 import json
 import logging
 import secrets
+import ssl
 import threading
 import time
 from collections.abc import Callable
@@ -1329,18 +1330,32 @@ class RequestHandler(BaseHTTPRequestHandler):
         self._redirect("/settings?m=saved")
 
 
+# Where deploy/install.sh generates the self-signed certificate DISPLAY_TLS=true serves.
+# Fixed, not configurable: one well-known pair the install script, this module and the
+# systemd units' file permissions all agree on, the same way ENV_FILE is fixed elsewhere.
+TLS_CERT_PATH = "/etc/studylife-display-tls.pem"
+TLS_KEY_PATH = "/etc/studylife-display-tls.key"
+
+
 def make_server(
     settings: Settings, refresh: Callable[[], int], bind: str | None = None
 ) -> DisplayServer:
     """Binds (but does not serve); tests pass "127.0.0.1:0" and read `server_address`."""
-    return DisplayServer(parse_bind(bind or settings.display_web_bind), WebApp(settings, refresh))
+    server = DisplayServer(parse_bind(bind or settings.display_web_bind), WebApp(settings, refresh))
+    if settings.display_tls:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(TLS_CERT_PATH, TLS_KEY_PATH)
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
+    return server
 
 
 def serve_web(settings: Settings, refresh: Callable[[], int]) -> int:
     server = make_server(settings, refresh)
     host, port = server.server_address[0], server.server_address[1]
     log.info(
-        "web interface listening on http://%s:%d/ (layouts: %s)",
+        "web interface listening on %s://%s:%d/ (layouts: %s)",
+        "https" if settings.display_tls else "http",
         host,
         port,
         ", ".join(sorted(valid_choices())),
