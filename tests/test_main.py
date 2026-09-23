@@ -1,5 +1,7 @@
 import json
 import logging
+import subprocess
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -364,6 +366,72 @@ class TestQuietHours:
         mock_api(sample)
         assert main(["run"]) == 0
         assert env["frame"].exists()
+
+
+class TestRefreshNow:
+    """What the web interface's subprocess calls (see TestServeRefresh below) - unlike `run`,
+    it must draw even inside quiet hours, because a browser button press is not the scheduled
+    timer."""
+
+    @respx.mock
+    def test_refresh_now_draws_inside_quiet_hours(
+        self, env: dict[str, Path], sample: Any, monkeypatch: pytest.MonkeyPatch, tz: ZoneInfo
+    ) -> None:
+        monkeypatch.setenv("DISPLAY_QUIET_HOURS", quiet_hours_around(datetime.now(tz)))
+        mock_api(sample)
+        assert main(["refresh-now"]) == 0
+        assert env["frame"].exists()
+
+
+class TestServeRefresh:
+    """`command_serve` wires up a different refresh strategy per driver; see
+    `refresh_via_subprocess` for why real hardware cannot refresh in the long-running web
+    process itself."""
+
+    def test_file_driver_refreshes_in_process(
+        self, env: dict[str, Path], sample: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fail_if_called(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("the file driver must never shell out to a subprocess")
+
+        monkeypatch.setattr(main_module.subprocess, "run", fail_if_called)
+        settings = main_module._settings(False)
+        assert settings.display_driver == "file"
+        with respx.mock:
+            mock_api(sample)
+            assert main_module.make_serve_refresh(settings)() == 0
+        assert env["frame"].exists()
+
+    def test_hardware_driver_refreshes_via_subprocess(
+        self, env: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(cmd: list[str], **kwargs: Any) -> Any:
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(main_module.subprocess, "run", fake_run)
+        monkeypatch.setenv("DISPLAY_DRIVER", "waveshare")
+        settings = main_module._settings(False)
+        assert main_module.make_serve_refresh(settings)() == 0
+        assert calls == [[sys.executable, "-m", "studylife_display.main", "refresh-now"]]
+
+    def test_subprocess_failure_is_logged_and_propagated(
+        self,
+        env: dict[str, Path],
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        def fake_run(cmd: list[str], **kwargs: Any) -> Any:
+            return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="boom")
+
+        monkeypatch.setattr(main_module.subprocess, "run", fake_run)
+        monkeypatch.setenv("DISPLAY_DRIVER", "waveshare")
+        caplog.set_level(logging.ERROR, logger="studylife_display")
+        settings = main_module._settings(False)
+        assert main_module.refresh_via_subprocess(settings) == 1
+        assert "boom" in caplog.text
 
 
 class TestDailyClear:
