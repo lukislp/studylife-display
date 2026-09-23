@@ -7,7 +7,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=pi
-SupplementalGroups=spi gpio
+SupplementaryGroups=spi gpio
 EnvironmentFile=/etc/studylife-display.env
 ExecStart=/opt/studylife-display/venv/bin/studylife-display run
 # A single refresh takes a few seconds of API calls plus ~5 s of panel refresh; anything
@@ -18,6 +18,11 @@ TimeoutStartSec=90
 # device nodes, and write the cached snapshot.
 ProtectSystem=strict
 ReadWritePaths=/var/lib/studylife-display
+# lgpio (the GPIO backend) creates a small notification pipe file in the process's current
+# working directory on start; with ProtectSystem=strict and no WorkingDirectory the CWD
+# defaults to / , which is read-only, so lgpio's init fails and gpiozero silently falls back
+# to its broken legacy sysfs pin factory. Give it a writable one instead.
+WorkingDirectory=/var/lib/studylife-display
 PrivateTmp=yes
 NoNewPrivileges=yes
 ProtectHome=yes

@@ -43,9 +43,11 @@ fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-echo "==> system packages (Pillow runtime, git, venv)"
+echo "==> system packages (Pillow runtime, git, venv, lgpio build/runtime)"
 apt-get update
-apt-get install -y python3-venv python3-pip git libopenjp2-7 fonts-dejavu-core
+# swig and liblgpio-dev are needed to build the `lgpio` Python package's C extension (it has
+# no prebuilt wheel for this platform); liblgpio-dev pulls in the liblgpio1 runtime library.
+apt-get install -y python3-venv python3-pip git libopenjp2-7 fonts-dejavu-core swig liblgpio-dev
 
 echo "==> enabling SPI (the HAT is driven over SPI0)"
 raspi-config nonint do_spi 0
@@ -86,7 +88,13 @@ fi
 # The `pi` extra pulls the Waveshare library straight from its git repository plus the
 # spidev/gpiozero/lgpio bindings; lgpio compiles against the system headers, hence
 # python3-pip/venv above. Everything else comes as prebuilt wheels from piwheels.
-"$VENV/bin/pip" install --upgrade "$SRC[pi]"
+# pip's git clone (and its build tmp dirs) land in TMPDIR/$TMPDIR by default, i.e. /tmp - a
+# tmpfs sized from RAM. On a 512 MB board (Pi 3 A+) that is far smaller than the Waveshare
+# e-Paper repo, so the clone fails part-way with "unable to write file" for unrelated files.
+# Point it at the real disk instead; $PREFIX is created above and has room to spare.
+mkdir -p "$PREFIX/tmp"
+TMPDIR="$PREFIX/tmp" "$VENV/bin/pip" install --upgrade "$SRC[pi]"
+rm -rf "$PREFIX/tmp"
 
 echo "==> state directory $STATE_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$STATE_DIR"
