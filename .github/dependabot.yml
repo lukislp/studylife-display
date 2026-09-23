@@ -5,16 +5,18 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
     commit-message:
       prefix: "fix(ci)"
     reviewers:
       - "lukislp"
+    open-pull-requests-limit: 2
   - package-ecosystem: uv
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
     commit-message:
       prefix: "fix(deps)"
     reviewers:
       - "lukislp"
+    open-pull-requests-limit: 2
