@@ -4,11 +4,13 @@ The rules, in the order they are tried (the setup and error screens are decided 
 of this, in `main.refresh_panel`):
 
 1. `review` inside the review window (`DISPLAY_AUTO_REVIEW`, default Sunday 18:00-24:00);
-2. `exam` when the next course goal is due within EXAM_SOON_DAYS;
-3. `focus` while a timer is running;
-4. `agenda` while a session planned for today still lies ahead and the wall clock is inside
+2. `milestone` on the one day the streak hits a round number (`milestone.MILESTONE_DAYS`) -
+   rare enough, and worth seeing right away, that it outranks even an exam countdown;
+3. `exam` when the next course goal is due within EXAM_SOON_DAYS;
+4. `focus` while a timer is running;
+5. `agenda` while a session planned for today still lies ahead and the wall clock is inside
    the agenda window (`DISPLAY_AUTO_AGENDA`, default 06:00-12:00);
-5. `classic` otherwise. `semester` is never picked automatically.
+6. `classic` otherwise. `semester` and `courses` are never picked automatically.
 
 An empty window switches that rule off. The windows travel in `AutoRules`, built from the
 settings by `rules_from_settings`, so this module stays free of I/O and of the clock: the
@@ -22,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from studylife_display.auto_rules import in_rule_window
 from studylife_display.layouts import AUTO, LAYOUTS
+from studylife_display.layouts.milestone import is_milestone
 from studylife_display.model import DashboardData
 
 if TYPE_CHECKING:
@@ -62,6 +65,8 @@ def resolve_layout(choice: str, data: DashboardData, rules: AutoRules = DEFAULT_
         return choice
     if in_rule_window(data.now, rules.review_window):
         return "review"
+    if is_milestone(data.streak_days):
+        return "milestone"
     goal = data.next_goal
     if goal is not None and goal.days_left <= EXAM_SOON_DAYS:
         return "exam"

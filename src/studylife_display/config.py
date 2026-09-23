@@ -9,10 +9,32 @@ from studylife_display.quiet_hours import parse_quiet_hours
 
 ROTATIONS = (0, 180)
 LANGUAGES = ("de", "en")
-LAYOUT_CHOICES = ("auto", "classic", "focus", "exam", "week", "semester", "agenda", "review")
+LAYOUT_CHOICES = (
+    "auto",
+    "classic",
+    "focus",
+    "exam",
+    "week",
+    "semester",
+    "agenda",
+    "review",
+    "courses",
+    "milestone",
+)
 
 Language = Literal["de", "en"]
-LayoutChoice = Literal["auto", "classic", "focus", "exam", "week", "semester", "agenda", "review"]
+LayoutChoice = Literal[
+    "auto",
+    "classic",
+    "focus",
+    "exam",
+    "week",
+    "semester",
+    "agenda",
+    "review",
+    "courses",
+    "milestone",
+]
 
 
 # The validators are plain functions so that the environment settings below and the
