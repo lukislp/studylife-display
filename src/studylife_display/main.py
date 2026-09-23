@@ -7,7 +7,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import subprocess
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -481,6 +483,50 @@ def command_check(settings: Settings) -> int:
     return 0
 
 
+def refresh_via_subprocess(settings: Settings) -> int:
+    """What the web interface calls for a browser-triggered refresh on real hardware, instead
+    of drawing in its own long-running process.
+
+    The vendor driver's `sleep()` never releases the GPIO pins it claims (only `cleanup=True`
+    does, which it never passes) - fine for the timer's own oneshot process, which releases
+    everything just by exiting, but the web interface's `serve` process never exits between
+    refreshes. Once it has drawn once, it holds those pins for as long as it keeps running,
+    and every later refresh from the timer's separate process fails with "GPIO busy" until
+    the web interface is restarted. A short-lived subprocess per refresh sidesteps this
+    entirely: it inherits the environment, reads the current settings.json overrides itself
+    (`refresh-now` also runs through `effective_settings`), and always releases its pins on
+    exit, exactly like the timer's own process."""
+    result = subprocess.run(
+        [sys.executable, "-m", "studylife_display.main", "refresh-now"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        log.error(
+            "refresh subprocess failed (exit %d): %s",
+            result.returncode,
+            result.stderr.strip() or result.stdout.strip(),
+        )
+    return result.returncode
+
+
+def make_serve_refresh(settings: Settings) -> Callable[[], int]:
+    """The web interface's refresh callable: in-process for the file driver (no real GPIO pins
+    to starve, and faster for dev/tests), a subprocess per refresh for real hardware - see
+    `refresh_via_subprocess`."""
+    if settings.display_driver == "file":
+
+        def refresh() -> int:
+            return refresh_panel(effective_settings(settings))
+
+        return refresh
+
+    def refresh_hardware() -> int:
+        return refresh_via_subprocess(settings)
+
+    return refresh_hardware
+
+
 def command_serve(settings: Settings) -> int:
     """The web interface. Refuses to bind without a proper access token: the person
     installing chooses it (deploy/install.sh suggests one), the code never defaults it.
@@ -495,7 +541,7 @@ def command_serve(settings: Settings) -> int:
             MIN_TOKEN_LENGTH,
         )
         return 2
-    return serve_web(settings, lambda: refresh_panel(effective_settings(settings)))
+    return serve_web(settings, make_serve_refresh(settings))
 
 
 def command_credentials_apply(settings: Settings, env_file: str) -> int:
@@ -514,6 +560,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("run", help="fetch, render and show once (what the systemd timer calls)")
+    sub.add_parser(
+        "refresh-now",
+        help=(
+            "one refresh, ignoring quiet hours and the daily clear (what the web interface's "
+            "own short-lived subprocess calls; see refresh_via_subprocess)"
+        ),
+    )
 
     preview = sub.add_parser("preview", help="render to a PNG instead of the panel")
     preview.add_argument("--out", default="frame.png", help="output path (default: frame.png)")
@@ -577,6 +630,8 @@ def main(argv: list[str] | None = None) -> int:
     settings = effective_settings(settings)
     if args.command == "run":
         return command_run(settings)
+    if args.command == "refresh-now":
+        return refresh_panel(settings)
     if args.command == "preview":
         return command_preview(settings, args.out, use_sample, args.layout)
     return command_check(settings)
