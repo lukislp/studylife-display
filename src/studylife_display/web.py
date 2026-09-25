@@ -43,12 +43,20 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import SplitResult, parse_qs, urlsplit
 
 from pydantic import ValidationError
 
+from studylife_display import api as api_module
 from studylife_display import package_version
-from studylife_display.config import LANGUAGES, ROTATIONS, Settings, WebOverrides, parse_bind
+from studylife_display.config import (
+    LANGUAGES,
+    READONLY_FIELDS,
+    ROTATIONS,
+    Settings,
+    WebOverrides,
+    parse_bind,
+)
 from studylife_display.connect import (
     CLIENT_ID,
     ConnectError,
@@ -70,6 +78,7 @@ from studylife_display.current_frame import (
     load_current_frame,
     read_current_png,
 )
+from studylife_display.health import health_report
 from studylife_display.layouts import AUTO, LAYOUTS
 from studylife_display.layouts.auto import (
     EXAM_SOON_DAYS,
@@ -78,7 +87,7 @@ from studylife_display.layouts.auto import (
 )
 from studylife_display.layouts.common import TEXT
 from studylife_display.model import DashboardData, build_dashboard
-from studylife_display.quiet_hours import in_quiet_hours, quiet_hours_end
+from studylife_display.quiet_hours import quiet_hours_end
 from studylife_display.render import render
 from studylife_display.sample import sample_payloads
 from studylife_display.settings_store import (
@@ -91,24 +100,19 @@ from studylife_display.settings_store import (
     valid_choices,
 )
 from studylife_display.snapshot import load_snapshot
-from studylife_display.status_store import REJECTED, load_status
+from studylife_display.status_store import load_status
 from studylife_display.studylife_client import SCOPES
 from studylife_display.times import zone
 from studylife_display.update_check import fetch_latest_tag, is_newer, latest_release
 
 log = logging.getLogger(__name__)
 
-MIN_TOKEN_LENGTH = 12
 SESSION_COOKIE = "studylife_display_session"
 WRONG_TOKEN_DELAY_SECONDS = 1.0
 MAX_BODY_BYTES = 64 * 1024
 README_URL = "https://github.com/lukislp/studylife-display#readme"
 README_OVERLAY_URL = "https://github.com/lukislp/studylife-display#sd-card-protection"
 TIMER_UNIT = "studylife-display.timer"
-
-# /healthz says "degraded" when the cached snapshot is older than this although the last
-# fetch succeeded: three missed five-minute refreshes mean the timer is not running.
-STALE_DEGRADED_MINUTES = 15
 
 WEB_TEXT: dict[str, dict[str, str]] = {
     "de": {
@@ -423,22 +427,6 @@ CONNECT_FLASH_KEYS = {
 }
 SETTINGS_FLASH_KEYS = {"saved", "reset"}
 
-# The environment-only values the settings page lists, and whether their value is shown
-# (a secret is only ever "set"/"not set").
-READONLY_FIELDS: tuple[tuple[str, str, bool], ...] = (
-    ("STUDYLIFE_BASE_URL", "studylife_base_url", True),
-    ("STUDYLIFE_API_KEY", "studylife_api_key", False),
-    ("STUDYLIFE_TIMEZONE", "studylife_timezone", True),
-    ("DISPLAY_DRIVER", "display_driver", True),
-    ("DISPLAY_STATE_PATH", "display_state_path", True),
-    ("DISPLAY_PERSIST_PATH", "display_persist_path", True),
-    ("DISPLAY_STALE_ERROR_HOURS", "display_stale_error_hours", True),
-    ("DISPLAY_WEB_BIND", "display_web_bind", True),
-    ("DISPLAY_WEB_TOKEN", "display_web_token", False),
-    ("DISPLAY_PUBLIC_BASE_URL", "display_public_base_url", True),
-    ("DISPLAY_SETUP_URL", "display_setup_url", True),
-)
-
 STYLE = """
 :root { color-scheme: light dark; }
 body { font-family: system-ui, sans-serif; margin: 0; padding: 16px; max-width: 1100px;
@@ -485,71 +473,6 @@ td.mono { font-family: ui-monospace, monospace; word-break: break-all; }
 """
 
 
-def health_report(settings: Settings, now: datetime) -> tuple[dict[str, Any], HTTPStatus]:
-    """The JSON for /healthz and its HTTP status: "setup" (200) while no API key is
-    configured at all (the panel shows the setup screen; `setup` is true), "ok" (200) when
-    the last fetch succeeded and the snapshot is fresh, "degraded" (200) when the last fetch
-    failed but a cached dashboard is shown or the snapshot is older than
-    STALE_DEGRADED_MINUTES outside quiet hours, "error" (503) when the key was rejected or
-    there is no data at all."""
-    settings = effective_settings(settings)
-    setup = not settings.studylife_api_key
-    tz = zone(settings.studylife_timezone)
-    state_path = Path(settings.display_state_path)
-    status = load_status(state_path.parent, tz)
-    snapshot = load_snapshot(state_path, tz)
-    quiet = in_quiet_hours(now, settings.display_quiet_hours)
-
-    layout: str | None = None
-    stale_minutes: int | None = None
-    last_fetch_at = status.last_fetch_at
-    if snapshot is not None:
-        data = build_dashboard(
-            snapshot.metrics,
-            snapshot.history,
-            snapshot.timer,
-            now,
-            tz,
-            snapshot.fetched_at,
-            sessions=snapshot.sessions,
-        )
-        layout = resolve_layout(load_layout_choice(settings), data, rules_from_settings(settings))
-        stale_minutes = data.stale_minutes
-        if last_fetch_at is None:
-            last_fetch_at = snapshot.fetched_at
-
-    error = status.last_error
-    rejected = error is not None and error.kind == REJECTED and not status.last_fetch_ok
-    timer_silent = (
-        stale_minutes is not None and stale_minutes > STALE_DEGRADED_MINUTES and not quiet
-    )
-    if setup:
-        state = "setup"
-    elif rejected or snapshot is None:
-        state = "error"
-    elif not status.last_fetch_ok or timer_silent:
-        state = "degraded"
-    else:
-        state = "ok"
-
-    report: dict[str, Any] = {
-        "status": state,
-        "setup": setup,
-        "version": package_version(),
-        "last_fetch_at": None if last_fetch_at is None else last_fetch_at.isoformat(),
-        "last_fetch_ok": status.last_fetch_ok,
-        "stale_minutes": stale_minutes,
-        "last_error": None if error is None else error.as_json(),
-        "last_panel_update_at": (
-            None if status.last_panel_update_at is None else status.last_panel_update_at.isoformat()
-        ),
-        "layout": layout,
-        "quiet_hours_active": quiet,
-        "sessions_ok": status.sessions_ok,
-    }
-    return report, HTTPStatus.OK if state != "error" else HTTPStatus.SERVICE_UNAVAILABLE
-
-
 def _page(title: str, body: str) -> bytes:
     document = (
         "<!doctype html><html><head><meta charset='utf-8'>"
@@ -589,6 +512,24 @@ class WebApp:
     @property
     def text(self) -> dict[str, str]:
         return WEB_TEXT[self.language]
+
+    @property
+    def last_connect_detail(self) -> str:
+        """Detail of the last connect failure (empty until one happens), for the "applied"
+        vs. everything-else outcome both the web page's flash message and the JSON API's
+        `/api/connect/paste` response format the same way."""
+        return self._flash_detail
+
+    def run_refresh(self) -> str:
+        """Runs the pipeline and maps its outcome onto "refreshed"/"failed" - what both the
+        cookie routes (`/layout`, `/refresh`) and the bearer-token ones (`/api/layout`,
+        `/api/refresh`) report back."""
+        try:
+            outcome = self.refresh()
+        except Exception:
+            log.exception("refresh triggered from the web interface failed")
+            return "failed"
+        return "refreshed" if outcome == 0 else "failed"
 
     @property
     def state_dir(self) -> Path:
@@ -1182,22 +1123,35 @@ class RequestHandler(BaseHTTPRequestHandler):
         return {key: values[0] for key, values in parse_qs(raw).items() if values}
 
     def _run_refresh(self) -> str:
-        """Runs the pipeline and maps its outcome onto a flash key."""
-        try:
-            outcome = self.app.refresh()
-        except Exception:
-            log.exception("refresh from the web interface failed")
-            return "failed"
-        return "refreshed" if outcome == 0 else "failed"
+        return self.app.run_refresh()
 
     def _flash(self, query: str) -> str | None:
         return parse_qs(query).get("m", [None])[0]
+
+    def _api_body(self) -> bytes:
+        """Like `_form()`, but raw bytes for api.py to `json.loads` - a GET never calls
+        this, so there is nothing to read for those routes."""
+        length = int(self.headers.get("Content-Length") or 0)
+        if length < 0 or length > MAX_BODY_BYTES:
+            self.close_connection = True
+            return b""
+        return self.rfile.read(length)
+
+    def _handle_api(self, parts: SplitResult, method: str) -> None:
+        body = self._api_body() if method == "POST" else b""
+        status, payload, content_type = api_module.handle(
+            self.app, method, parts.path, self.headers, body, health_report
+        )
+        self._send(status, payload, content_type=content_type)
 
     # -- routes -------------------------------------------------------------------------
 
     def do_GET(self) -> None:
         parts = urlsplit(self.path)
         app = self.app
+        if parts.path.startswith("/api/"):
+            self._handle_api(parts, "GET")
+            return
         if parts.path == "/healthz":
             # For an uptime monitor: no cookie, no origin check, nothing secret inside.
             tz = zone(app.settings.studylife_timezone)
@@ -1213,7 +1167,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             if outcome == "applied":
                 self._send(HTTPStatus.OK, app.simple_page(text["connect_callback_done"]))
                 return
-            message = text["connect_flash_" + outcome].format(detail=app._flash_detail)
+            message = text["connect_flash_" + outcome].format(detail=app.last_connect_detail)
             self._send(HTTPStatus.BAD_REQUEST, app.simple_page(message))
             return
         if parts.path == "/":
@@ -1257,6 +1211,9 @@ class RequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parts = urlsplit(self.path)
         app = self.app
+        if parts.path.startswith("/api/"):
+            self._handle_api(parts, "POST")
+            return
         form = self._form()
         if parts.path == "/login":
             token = form.get("token", "")
