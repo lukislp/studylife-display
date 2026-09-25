@@ -18,7 +18,7 @@ import httpx
 from PIL import Image
 
 from studylife_display import package_version
-from studylife_display.config import Settings
+from studylife_display.config import MIN_TOKEN_LENGTH, Settings
 from studylife_display.connect import local_hostname, setup_connect_url
 from studylife_display.credentials import ENV_FILE, apply_pending_credentials
 from studylife_display.current_frame import DASHBOARD, ERROR, SETUP, save_current_frame
@@ -55,7 +55,7 @@ from studylife_display.status_store import (
 )
 from studylife_display.studylife_client import StudyLifeApiError, StudyLifeClient
 from studylife_display.times import zone
-from studylife_display.web import MIN_TOKEN_LENGTH, TLS_CERT_PATH, TLS_KEY_PATH, serve_web
+from studylife_display.web import TLS_CERT_PATH, TLS_KEY_PATH, serve_web
 
 log = logging.getLogger("studylife_display")
 
@@ -538,6 +538,13 @@ def command_serve(settings: Settings) -> int:
             "DISPLAY_WEB_TOKEN is %s; set one with at least %d characters in the environment "
             "file before starting the web interface",
             "empty" if not settings.display_web_token else "too short",
+            MIN_TOKEN_LENGTH,
+        )
+        return 2
+    if settings.display_api_token and len(settings.display_api_token) < MIN_TOKEN_LENGTH:
+        log.error(
+            "DISPLAY_API_TOKEN is set but shorter than %d characters; leave it empty to "
+            "keep the JSON API off, or use a proper token",
             MIN_TOKEN_LENGTH,
         )
         return 2

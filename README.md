@@ -237,6 +237,45 @@ without the `Sessions.GetAll` scope, typically): the dashboard is fine, only the
 empty, and the layouts page says why. Set the interval to a few minutes; the endpoint reads
 two small files and never calls StudyLife.
 
+### JSON API (for other software)
+
+`GET /api/*` and `POST /api/*` mirror everything the web interface's pages can do - the
+current layout and frame, the layout previews, a refresh, the settings, connecting the
+account - for a machine client that cannot hold a browser session cookie, such as the
+[studylife-hacs](https://github.com/lukislp/studylife-homeassistant) Home Assistant
+integration's optional "show and switch the display" feature. It is off by default and a
+second, separate opt-in from the web interface:
+
+- **`DISPLAY_API_TOKEN`** (empty by default, at least 12 characters when set) turns it on.
+  Leaving it empty keeps every `/api/*` route a 404, the same as an unknown path - installs
+  that never set it gain no second door next to the cookie one.
+- Every route requires `Authorization: Bearer <token>`, compared in constant time; a wrong
+  or missing one is a 401 (or a 404 when the API is off entirely, at the same one-second
+  delay, so "off" and "wrong token" cannot be told apart by response time). A bearer token
+  carries no ambient browser authority the way a cookie does, so unlike the web interface's
+  state-changing routes these never check `Sec-Fetch-Site`/`Origin` - there is nothing a
+  same-origin check would protect against a header no page in any browser ever holds.
+- Request/response bodies are JSON, not HTML forms.
+
+| Route | Method | What it does |
+| --- | --- | --- |
+| `/api/state` | GET | `/healthz`'s report plus `layout_choice` (the persisted preference) and `current_frame` (what is on the panel right now: `shown_at`, `layout`, `kind`). Same HTTP status as `/healthz` (503 for `"error"`). |
+| `/api/layouts` | GET | `{"choice", "resolved", "options": [{"key", "name": {"de","en"}, "description": {"de","en"}}, ...]}` - the layout picker's cards, without the HTML. |
+| `/api/layout` | POST | `{"layout": "focus"}` - saves the choice and refreshes the panel, like "Apply"/"Übernehmen". `{"outcome": "refreshed"\|"failed"}`; an unknown key is a 400. |
+| `/api/refresh` | POST | Refreshes without changing the layout; `{"outcome": ...}` like above. |
+| `/api/current.png` | GET | The frame that is on the panel right now (PNG), like the cookie route; 404 before the first one. |
+| `/api/preview/<key>.png` | GET | A preview of `<key>` rendered from the cached data (PNG); 404 for an unknown key. |
+| `/api/settings` | GET | `{"values", "sources", "readonly"}` - the settings page's fields, which key came from `settings.json` vs. the environment, and the environment-only fields as `{"set": bool, "value": str\|null}` (a secret such as the API key or either token is `"set"` only, never shown). |
+| `/api/settings` | POST | A JSON object with any subset of `language`, `rotate`, `quiet_hours`, `clear_at`, `update_check`, `auto_review`, `auto_agenda` - unlike the web form (which always resubmits every field), an omitted key is left untouched and an explicit `null` resets that one key to the environment value. Validated with the same rules as the environment; an invalid value or an unknown field is a 400 and nothing is written. |
+| `/api/settings/reset` | POST | Resets every settings.json field to the environment values, like "Reset"/"Auf Umgebungswerte zurücksetzen". |
+| `/api/connect` | GET | `{"identity", "pending", "overlay_warning", "mode", "redirect_uri", "client_id", "scopes"}` - the connect page's state as data. `identity` is `{"connected": bool, "instance", "user_id", "credential", "error"}` from `GET /api/auth/whoami`. |
+| `/api/connect/start` | POST | Begins a connect attempt, like "Start connecting"; returns `{"connect_url", "redirect_uri", "expires_at"}`. |
+| `/api/connect/paste` | POST | `{"callback_url": "..."}` - redeems the pasted callback address, like the paste form; `{"outcome": ...}` (`"applied"` on success, plus `"detail"` on most failures). |
+
+`/api/layout` and `/api/settings` are still layered on the same `settings.json` and the
+same panel lock as the cookie routes, so a change from either surface is visible on the
+other one and a refresh from the API waits for one already in progress the same way.
+
 ## Hardware
 
 - Raspberry Pi 3 Model A+ (any Pi with the 40-pin header works; the 3A+ is small, fanless and

@@ -214,6 +214,10 @@ STUDYLIFE_TIMEZONE=Europe/Berlin
 # DISPLAY_AUTO_AGENDA=06-12
 # Web interface: bind address and the access token asked for on its login page.
 # DISPLAY_WEB_BIND=0.0.0.0:8795
+# Optional bearer-token JSON API under /api/ for other software (e.g. the studylife-hacs
+# Home Assistant integration) - a separate token from the one above, off (every /api/
+# route 404s) until this is at least 12 characters. See the README, JSON API section.
+# DISPLAY_API_TOKEN=
 # Serve the web interface over https, with the self-signed certificate this script just
 # generated (or kept) at /etc/studylife-display-tls.pem. Needed for DISPLAY_PUBLIC_BASE_URL
 # below to work without a separate reverse proxy or Tailscale.

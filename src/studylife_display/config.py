@@ -7,6 +7,10 @@ from studylife_display.auto_rules import parse_rule_window
 from studylife_display.daily_clear import parse_clear_at
 from studylife_display.quiet_hours import parse_quiet_hours
 
+# Length both DISPLAY_WEB_TOKEN and DISPLAY_API_TOKEN are held to: short enough to type,
+# long enough that guessing it is not a realistic attack from the LAN.
+MIN_TOKEN_LENGTH = 12
+
 ROTATIONS = (0, 180)
 LANGUAGES = ("de", "en")
 LAYOUT_CHOICES = (
@@ -180,6 +184,17 @@ class Settings(BaseSettings):
     display_web_bind: str = "0.0.0.0:8795"
     display_web_token: str = ""
 
+    # Optional: a second, separate token that turns on a bearer-authenticated JSON API
+    # under /api/ (see api.py) mirroring everything the cookie web interface can do -
+    # read the layout/frame/settings/connect state, switch the layout, trigger a refresh,
+    # change settings - for a machine client on the same LAN (the studylife-hacs Home
+    # Assistant integration, primarily) that cannot hold a browser session cookie. Empty
+    # (the default) keeps every /api/ route 404, the same as an unknown path: this is an
+    # opt-in second door, not something an unconfigured install exposes by accident. When
+    # set it must be at least MIN_TOKEN_LENGTH characters, checked in `command_serve`
+    # exactly like DISPLAY_WEB_TOKEN; unlike that one, an empty value is valid (off).
+    display_api_token: str = ""
+
     # Serve the web interface itself over https, with the self-signed certificate
     # deploy/install.sh generates at TLS_CERT_PATH/TLS_KEY_PATH (see web.py). Off by default:
     # a self-signed certificate still shows the browser's "not private" interstitial once,
@@ -293,3 +308,21 @@ OVERRIDE_FIELDS: dict[str, str] = {
     "auto_review": "display_auto_review",
     "auto_agenda": "display_auto_agenda",
 }
+
+# The environment-only values the settings page (and /api/settings) list, and whether the
+# value itself is shown (a secret is only ever "set"/"not set"). Shared by web.py and
+# api.py so the two surfaces agree on what counts as a secret.
+READONLY_FIELDS: tuple[tuple[str, str, bool], ...] = (
+    ("STUDYLIFE_BASE_URL", "studylife_base_url", True),
+    ("STUDYLIFE_API_KEY", "studylife_api_key", False),
+    ("STUDYLIFE_TIMEZONE", "studylife_timezone", True),
+    ("DISPLAY_DRIVER", "display_driver", True),
+    ("DISPLAY_STATE_PATH", "display_state_path", True),
+    ("DISPLAY_PERSIST_PATH", "display_persist_path", True),
+    ("DISPLAY_STALE_ERROR_HOURS", "display_stale_error_hours", True),
+    ("DISPLAY_WEB_BIND", "display_web_bind", True),
+    ("DISPLAY_WEB_TOKEN", "display_web_token", False),
+    ("DISPLAY_API_TOKEN", "display_api_token", False),
+    ("DISPLAY_PUBLIC_BASE_URL", "display_public_base_url", True),
+    ("DISPLAY_SETUP_URL", "display_setup_url", True),
+)
