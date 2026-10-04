@@ -81,7 +81,7 @@ from studylife_display.current_frame import (
     read_current_png,
 )
 from studylife_display.health import health_report
-from studylife_display.layouts import AUTO, CYCLE, DUO, LAYOUTS, PSEUDO_CHOICES
+from studylife_display.layouts import AUTO, LAYOUTS, PSEUDO_CHOICES
 from studylife_display.layouts.auto import (
     EXAM_SOON_DAYS,
     resolve_layout,
@@ -119,7 +119,7 @@ TIMER_UNIT = "studylife-display.timer"
 # The auto-rule windows the settings page edits, in display order (settings.json keys).
 AUTO_WINDOW_KEYS = ("auto_review", "auto_agenda", "auto_tomorrow", "auto_quiet")
 # Everything "reset to the environment values" removes from settings.json: every override
-# but the layout choice itself (the cycle order and the duo pair go with it).
+# but the layout choice itself (the duo pair goes with it).
 RESETTABLE_KEYS = tuple(key for key in OVERRIDE_FIELDS if key != "layout")
 
 WEB_TEXT: dict[str, dict[str, str]] = {
@@ -149,13 +149,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
             "Klassisch. Alle anderen Layouts werden nie automatisch gewählt."
         ),
         "auto_off": "aus",
-        "options_heading": "Wechsel und Duo",
-        "cycle_label": "Reihenfolge für „Wechsel“",
-        "cycle_hint": (
-            "Layout-Schlüssel durch Komma getrennt, in dieser Reihenfolge; bei jeder "
-            "Aktualisierung kommt das nächste. Möglich: {keys}"
-        ),
-        "cycle_invalid": "Ungültige Wechsel-Liste: {message}",
+        "options_heading": "Duo",
         "duo_label": "Duo: zwei Layouts nebeneinander",
         "duo_left": "links",
         "duo_right": "rechts",
@@ -326,13 +320,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
             "classic. Every other layout is never picked automatically."
         ),
         "auto_off": "off",
-        "options_heading": "Cycle and duo",
-        "cycle_label": "Order for “Cycle”",
-        "cycle_hint": (
-            "Layout keys separated by commas, in this order; every refresh shows the next one. "
-            "Available: {keys}"
-        ),
-        "cycle_invalid": "Invalid cycle list: {message}",
+        "options_heading": "Duo",
         "duo_label": "Duo: two layouts side by side",
         "duo_left": "left",
         "duo_right": "right",
@@ -592,20 +580,13 @@ class WebApp:
     def now(self) -> datetime:
         return datetime.now(zone(self.settings.studylife_timezone))
 
-    def previous_layout(self) -> str | None:
-        """The layout on the panel right now, which the cycle choice steps on from."""
-        frame = self.current_frame()
-        return frame.layout if frame is not None and frame.kind == DASHBOARD else None
-
     def duo_pair(self) -> tuple[str, str]:
         left, right = parse_layout_list(self.effective().display_duo, "DISPLAY_DUO")
         return left, right
 
     def resolve(self, choice: str, data: DashboardData) -> str:
-        """`choice` as it would be drawn right now (the pseudo choices resolved)."""
-        return resolve_layout(
-            choice, data, rules_from_settings(self.effective()), self.previous_layout()
-        )
+        """`choice` as it would be drawn right now (the auto choice resolved)."""
+        return resolve_layout(choice, data, rules_from_settings(self.effective()))
 
     # -- authentication -----------------------------------------------------------------
 
@@ -856,7 +837,6 @@ class WebApp:
         data, is_sample = self.current_data()
         choice = load_layout_choice(settings)
         resolved = self.resolve(AUTO, data)
-        next_in_cycle = self.resolve(CYCLE, data)
         parts = [f"<h1>{html.escape(t['title'])} · {html.escape(t['layouts_heading'])}</h1>"]
         parts.append(self._nav("/"))
         if flash in FLASH_KEYS:
@@ -887,7 +867,6 @@ class WebApp:
 
         parts.append("<form method='post' action='/layout'><div class='grid'>")
         auto_spec = PSEUDO_CHOICES[AUTO]
-        cycle_spec = PSEUDO_CHOICES[CYCLE]
         cards: list[tuple[str, str, str]] = [
             (
                 AUTO,
@@ -895,13 +874,6 @@ class WebApp:
                 + " · "
                 + t["auto_now"].format(layout=LAYOUTS[resolved].name[language]),
                 auto_spec.description[language],
-            ),
-            (
-                CYCLE,
-                cycle_spec.name[language]
-                + " · "
-                + t["auto_now"].format(layout=LAYOUTS[next_in_cycle].name[language]),
-                cycle_spec.description[language],
             ),
         ]
         cards += [
@@ -939,17 +911,10 @@ class WebApp:
         return _page(t["title"], "".join(parts))
 
     def _layout_options_block(self, settings: Settings, language: str) -> str:
-        """The cycle order (a text field, since the order matters) and the duo pair (two
-        selects) under the layout cards; posted together with the layout choice."""
+        """The duo pair (two selects) under the layout cards; posted together with the
+        layout choice."""
         t = self.text
-        keys = ", ".join(key for key in LAYOUTS if key != DUO)
         parts = [f"<h2>{html.escape(t['options_heading'])}</h2><div class='field'>"]
-        parts.append(
-            f"<label for='cycle'>{html.escape(t['cycle_label'])}</label>"
-            f"<input id='cycle' name='cycle' type='text' "
-            f"value='{html.escape(settings.display_cycle, quote=True)}'>"
-            f"<small>{html.escape(t['cycle_hint'].format(keys=keys))}</small>"
-        )
         left, right = self.duo_pair()
         parts.append(f"<label>{html.escape(t['duo_label'])}</label><div class='duo'>")
         for side, current in (("duo_left", left), ("duo_right", right)):
@@ -1373,11 +1338,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             if not is_valid_choice(choice):
                 self._send(HTTPStatus.BAD_REQUEST, app.simple_page(app.text["bad_request"]))
                 return
-            # The cycle order and the duo pair travel in the same form; an invalid value is
-            # a 400 before anything is written, like an invalid layout.
+            # The duo pair travels in the same form; an invalid value is a 400 before
+            # anything is written, like an invalid layout.
             options: dict[str, str] = {}
-            if "cycle" in form:
-                options["cycle"] = form["cycle"]
             if "duo_left" in form or "duo_right" in form:
                 options["duo"] = f"{form.get('duo_left', '')},{form.get('duo_right', '')}"
             try:

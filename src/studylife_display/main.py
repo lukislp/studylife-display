@@ -25,7 +25,6 @@ from studylife_display.current_frame import (
     DASHBOARD,
     ERROR,
     SETUP,
-    load_current_frame,
     save_current_frame,
 )
 from studylife_display.daily_clear import (
@@ -100,12 +99,6 @@ def duo_pair(settings: Settings) -> tuple[str, str]:
     """The two halves of the duo layout, from DISPLAY_DUO / the `duo` setting."""
     left, right = parse_layout_list(settings.display_duo, "DISPLAY_DUO")
     return left, right
-
-
-def previous_layout(state_dir: Path, tz: ZoneInfo) -> str | None:
-    """The layout of the frame on the panel right now (for the cycle choice), or None."""
-    frame = load_current_frame(state_dir, tz)
-    return frame.layout if frame is not None and frame.kind == DASHBOARD else None
 
 
 def present(display: Display, image: Image.Image, clear_first: bool = False) -> None:
@@ -347,9 +340,7 @@ def refresh_panel(
 
     data = build(snapshot, now, tz)
     choice = layout_choice if layout_choice is not None else load_layout_choice(settings)
-    layout = resolve_layout(
-        choice, data, rules_from_settings(settings), previous_layout(state_dir, tz)
-    )
+    layout = resolve_layout(choice, data, rules_from_settings(settings))
     image = render(data, language, layout, duo_pair(settings))
     if not _put_on_panel(
         settings,
@@ -420,7 +411,6 @@ def command_preview(
         notes_payload=notes,
     )
     choice = layout_choice if layout_choice is not None else load_layout_choice(settings)
-    # A sample preview has no panel state, so "cycle" shows the first layout of the list.
     layout = resolve_layout(choice, data, rules_from_settings(settings))
     show(FileDisplay(output), data, settings.display_language, layout, duo=duo_pair(settings))
     log.info("rendered %s (%s) to %s", layout, choice, output)
@@ -533,13 +523,7 @@ def command_check(settings: Settings) -> int:
         "notes": len(data.notes),
         "unavailable": sorted(data.unavailable),
         "layout_choice": choice,
-        "layout": resolve_layout(
-            choice,
-            data,
-            rules_from_settings(settings),
-            previous_layout(Path(settings.display_state_path).parent, tz),
-        ),
-        "cycle": list(rules_from_settings(settings).cycle),
+        "layout": resolve_layout(choice, data, rules_from_settings(settings)),
         "duo": list(duo_pair(settings)),
         "quiet_hours_active": in_quiet_hours(now, settings.display_quiet_hours),
     }

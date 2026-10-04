@@ -86,10 +86,8 @@ The four windows use the quiet-hours notation with an optional list of weekdays 
 midnight) and can be changed on the settings page; an empty window switches that rule off.
 Every other layout is never chosen automatically: they are views to switch to on purpose.
 
-`cycle` is the second choice that is not a layout: every refresh shows the next layout of a
-configured list (`DISPLAY_CYCLE`, default `classic,week,agenda,review`; the layouts page and
-`/api/layout` can change it), starting over after the last one or whenever the frame on the
-panel is not part of the list. Only the content changes - the panel's orientation is
+`auto` is the only choice that is not a layout: either it picks the layout, or the user
+picks one by hand. Whichever it is, only the content changes - the panel's orientation is
 `DISPLAY_ROTATE` alone and never moves by itself. The choice comes from, in order of
 precedence, `settings.json` next to the cached snapshot (written by the web interface) and
 the `DISPLAY_LAYOUT` variable. Switching layouts is a full
@@ -221,7 +219,7 @@ detects that; connect first, enable the overlay afterwards.
 
 `Einstellungen` holds language, rotation, quiet hours, the daily clear time, the update
 check and the four windows of the auto rules (weekly review, agenda, tomorrow, night); the
-layouts page itself holds the cycle order and the duo pair under the layout cards. They are saved into the
+layouts page itself holds the duo pair under the layout cards. They are saved into the
 same `settings.json` as the layout choice (so they survive a
 reboot the same way, see [SD-card protection](#sd-card-protection)), validated with the
 same rules as the environment variables (an invalid value is shown next to the field and
@@ -283,13 +281,13 @@ second, separate opt-in from the web interface:
 | Route | Method | What it does |
 | --- | --- | --- |
 | `/api/state` | GET | `/healthz`'s report plus `layout_choice` (the persisted preference) and `current_frame` (what is on the panel right now: `shown_at`, `layout`, `kind`). Same HTTP status as `/healthz` (503 for `"error"`). |
-| `/api/layouts` | GET | `{"choice", "resolved", "next_in_cycle", "cycle", "duo", "pseudo", "options", "panes"}` - the layout picker as data: the persisted choice, what `auto` would draw right now, what `cycle` would draw next, the cycle order and the duo pair as lists of keys, the two pseudo choices and the layouts as `[{"key", "name": {"de","en"}, "description": {"de","en"}}, ...]`, and the keys that can be a duo half. |
-| `/api/layout` | POST | `{"layout": "focus"}` - saves the choice and refreshes the panel, like "Apply"/"Übernehmen". Optionally in the same call `"cycle": ["today", "week"]` and/or `"duo": ["year", "month"]` (lists of keys or the comma string), validated like the settings. `{"outcome": "refreshed"\|"failed"}`; an unknown key, pair or order is a 400 and nothing is written. |
+| `/api/layouts` | GET | `{"choice", "resolved", "duo", "pseudo", "options", "panes"}` - the layout picker as data: the persisted choice, what `auto` would draw right now, the duo pair as a list of keys, the pseudo choice and the layouts as `[{"key", "name": {"de","en"}, "description": {"de","en"}}, ...]`, and the keys that can be a duo half. |
+| `/api/layout` | POST | `{"layout": "focus"}` - saves the choice and refreshes the panel, like "Apply"/"Übernehmen". Optionally in the same call `"duo": ["year", "month"]` (a list of keys or the comma string), validated like the settings. `{"outcome": "refreshed"\|"failed"}`; an unknown key or pair is a 400 and nothing is written. |
 | `/api/refresh` | POST | Refreshes without changing the layout; `{"outcome": ...}` like above. |
 | `/api/current.png` | GET | The frame that is on the panel right now (PNG), like the cookie route; 404 before the first one. |
 | `/api/preview/<key>.png` | GET | A preview of `<key>` rendered from the cached data (PNG); 404 for an unknown key. |
 | `/api/settings` | GET | `{"values", "sources", "readonly"}` - the settings page's fields, which key came from `settings.json` vs. the environment, and the environment-only fields as `{"set": bool, "value": str\|null}` (a secret such as the API key or either token is `"set"` only, never shown). |
-| `/api/settings` | POST | A JSON object with any subset of `language`, `rotate`, `quiet_hours`, `clear_at`, `update_check`, `auto_review`, `auto_agenda`, `auto_tomorrow`, `auto_quiet`, `cycle`, `duo` (the last two as a comma string or a list of keys) - unlike the web form (which always resubmits every field), an omitted key is left untouched and an explicit `null` resets that one key to the environment value. Validated with the same rules as the environment; an invalid value or an unknown field is a 400 and nothing is written. |
+| `/api/settings` | POST | A JSON object with any subset of `language`, `rotate`, `quiet_hours`, `clear_at`, `update_check`, `auto_review`, `auto_agenda`, `auto_tomorrow`, `auto_quiet`, `duo` (the last one as a comma string or a list of keys) - unlike the web form (which always resubmits every field), an omitted key is left untouched and an explicit `null` resets that one key to the environment value. Validated with the same rules as the environment; an invalid value or an unknown field is a 400 and nothing is written. |
 | `/api/settings/reset` | POST | Resets every settings.json field to the environment values, like "Reset"/"Auf Umgebungswerte zurücksetzen". |
 | `/api/connect` | GET | `{"identity", "pending", "overlay_warning", "mode", "redirect_uri", "client_id", "scopes"}` - the connect page's state as data. `identity` is `{"connected": bool, "instance", "user_id", "credential", "error"}` from `GET /api/auth/whoami`. |
 | `/api/connect/start` | POST | Begins a connect attempt, like "Start connecting"; returns `{"connect_url", "redirect_uri", "expires_at"}`. |
@@ -368,12 +366,11 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 | `DISPLAY_CLEAR_AT` | `04:00` | Time of the daily full clear against ghosting; empty = off (*web*) |
 | `DISPLAY_UPDATE_CHECK` | `false` | Let the web interface ask GitHub (once per 6 h) whether a newer release exists (*web*) |
 | `DISPLAY_AUTO_UPDATE` | `false` | Let `studylife-display-update.timer` install a newer release once a day, unattended; see [Updating](#updating) |
-| `DISPLAY_LAYOUT` | `auto` | `auto`, `cycle` or any layout key from [Layouts](#layouts) (`classic`, `focus`, `exam`, `week`, `semester`, `agenda`, `review`, `courses`, `milestone`, `month`, `exams`, `year`, `balance`, `timer`, `tomorrow`, `today`, `goals`, `achievements`, `note`, `quiet`, `duo`); overridden by the choice made in the web interface |
+| `DISPLAY_LAYOUT` | `auto` | `auto` or any layout key from [Layouts](#layouts) (`classic`, `focus`, `exam`, `week`, `semester`, `agenda`, `review`, `courses`, `milestone`, `month`, `exams`, `year`, `balance`, `timer`, `tomorrow`, `today`, `goals`, `achievements`, `note`, `quiet`, `duo`); overridden by the choice made in the web interface |
 | `DISPLAY_AUTO_REVIEW` | `sun 18-24` | Window of the `review` rule in `auto`: `[weekdays] HH-HH` or `HH:MM-HH:MM` (`24` = midnight, no wrap past midnight); empty = rule off (*web*) |
 | `DISPLAY_AUTO_AGENDA` | `06-12` | Window of the `agenda` rule in `auto`, same notation; empty = rule off (*web*) |
 | `DISPLAY_AUTO_TOMORROW` | `18-23` | Window of the `tomorrow` rule in `auto`, same notation; empty = rule off (*web*) |
 | `DISPLAY_AUTO_QUIET` | – | Window of the `quiet` rule in `auto`, same notation; empty = rule off (*web*) |
-| `DISPLAY_CYCLE` | `classic,week,agenda,review` | The layouts the `cycle` choice steps through, comma-separated, in this order; at least one, no pseudo choices (*web*, on the layouts page) |
 | `DISPLAY_DUO` | `focus,agenda` | The two halves of the `duo` layout, `left,right`, two different layout keys (*web*, on the layouts page) |
 | `DISPLAY_PERSIST_PATH` | `/boot/firmware/studylife-display/settings.json` | Copy of the web interface's choice on the boot partition, restored at boot (see [SD-card protection](#sd-card-protection)); empty disables it |
 | `DISPLAY_WEB_BIND` | `0.0.0.0:8795` | Where `serve` listens |

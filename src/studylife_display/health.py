@@ -14,7 +14,6 @@ from typing import Any
 
 from studylife_display import package_version
 from studylife_display.config import Settings
-from studylife_display.current_frame import DASHBOARD, load_current_frame
 from studylife_display.layouts.auto import resolve_layout, rules_from_settings
 from studylife_display.model import build_dashboard
 from studylife_display.quiet_hours import in_quiet_hours
@@ -59,12 +58,7 @@ def health_report(settings: Settings, now: datetime) -> tuple[dict[str, Any], HT
             achievements_payload=snapshot.achievements,
             notes_payload=snapshot.notes,
         )
-        # The cycle choice resolves relative to the frame on the panel right now.
-        frame = load_current_frame(state_path.parent, tz)
-        previous = frame.layout if frame is not None and frame.kind == DASHBOARD else None
-        layout = resolve_layout(
-            load_layout_choice(settings), data, rules_from_settings(settings), previous
-        )
+        layout = resolve_layout(load_layout_choice(settings), data, rules_from_settings(settings))
         stale_minutes = data.stale_minutes
         if last_fetch_at is None:
             last_fetch_at = snapshot.fetched_at

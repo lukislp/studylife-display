@@ -11,7 +11,6 @@ from studylife_display.layouts.auto import (
     DEFAULT_RULES,
     EXAM_SOON_DAYS,
     AutoRules,
-    next_in_cycle,
     resolve_layout,
     rules_from_settings,
 )
@@ -241,46 +240,26 @@ class TestQuietAndTomorrowRules:
         assert resolve_layout("auto", at(morning, morning.now.replace(hour=8)), rules) == "agenda"
 
 
-class TestCycle:
-    def test_steps_through_the_default_list(self, data: DashboardData) -> None:
-        assert DEFAULT_RULES.cycle == ("classic", "week", "agenda", "review")
-        assert resolve_layout("cycle", data) == "classic"
-        assert resolve_layout("cycle", data, previous="classic") == "week"
-        assert resolve_layout("cycle", data, previous="agenda") == "review"
-        # Wraps around, and restarts when the last frame was not part of the list.
-        assert resolve_layout("cycle", data, previous="review") == "classic"
-        assert resolve_layout("cycle", data, previous="focus") == "classic"
-
-    def test_custom_list_and_helper(self) -> None:
-        rules = AutoRules(cycle=("year", "month"))
-        assert next_in_cycle(rules.cycle, None) == "year"
-        assert next_in_cycle(rules.cycle, "year") == "month"
-        assert next_in_cycle(rules.cycle, "month") == "year"
-        assert next_in_cycle((), "year") == "classic"
-
-    def test_a_concrete_choice_ignores_the_previous_frame(self, data: DashboardData) -> None:
-        assert resolve_layout("week", data, previous="classic") == "week"
-
+class TestRuleSettings:
     def test_rules_from_settings_reads_the_new_fields(self) -> None:
         settings = Settings(
             studylife_base_url="https://studylife.test",  # type: ignore[arg-type]
             display_auto_tomorrow="19-22",
             display_auto_quiet="22-23",
-            display_cycle="year, month ,today",
         )
         rules = rules_from_settings(settings)
         assert rules.tomorrow_window == "19-22"
         assert rules.quiet_window == "22-23"
-        assert rules.cycle == ("year", "month", "today")
 
-    def test_settings_reject_unknown_or_pseudo_cycle_entries(self) -> None:
-        for bad in ("classic,holographic", "auto,classic", "", "week,week"):
-            with pytest.raises(ValueError):
-                Settings(
-                    studylife_base_url="https://studylife.test",  # type: ignore[arg-type]
-                    display_cycle=bad,
-                )
-        for bad in ("classic", "classic,week,month", "duo,classic", "focus,focus"):
+    def test_settings_reject_unknown_or_pseudo_duo_entries(self) -> None:
+        for bad in (
+            "classic",
+            "classic,week,month",
+            "classic,holographic",
+            "auto,classic",
+            "duo,classic",
+            "focus,focus",
+        ):
             with pytest.raises(ValueError):
                 Settings(
                     studylife_base_url="https://studylife.test",  # type: ignore[arg-type]

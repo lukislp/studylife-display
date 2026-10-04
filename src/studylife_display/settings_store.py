@@ -41,7 +41,7 @@ class InvalidSettingsFile(ValueError):
 
 
 def valid_choices() -> frozenset[str]:
-    """Every layout key plus the pseudo choices ("auto", "cycle")."""
+    """Every layout key plus the pseudo choice "auto"."""
     return frozenset(LAYOUTS) | frozenset(PSEUDO_CHOICES)
 
 

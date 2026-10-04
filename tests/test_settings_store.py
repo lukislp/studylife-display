@@ -42,10 +42,10 @@ def test_round_trip(settings: Settings) -> None:
 
 def test_valid_choices_are_the_layouts_plus_the_pseudo_choices() -> None:
     # config.LAYOUT_CHOICES is the literal pydantic validates against; it must list exactly
-    # the registry plus "auto" and "cycle", or a layout could be rendered but never chosen.
+    # the registry plus "auto", or a layout could be rendered but never chosen.
     assert valid_choices() == set(LAYOUT_CHOICES)
-    assert {"auto", "cycle", "duo", "classic", "month", "year", "quiet"} <= valid_choices()
-    assert set(CONCRETE_LAYOUTS) == valid_choices() - {"auto", "cycle", "duo"}
+    assert {"auto", "duo", "classic", "month", "year", "quiet"} <= valid_choices()
+    assert set(CONCRETE_LAYOUTS) == valid_choices() - {"auto", "duo"}
 
 
 def test_invalid_key_is_rejected_and_nothing_is_written(settings: Settings) -> None:
