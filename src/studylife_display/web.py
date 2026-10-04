@@ -142,13 +142,16 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "auto_description": "Wählt bei jeder Aktualisierung das passende Layout.",
         "auto_rules": (
             "Automatisch heißt, in dieser Reihenfolge: Wochenrückblick im Fenster {review}; "
-            "Serien-Meilenstein an einem runden Tag; Prüfung, wenn die nächste Prüfung in "
-            "höchstens {days} Tagen ansteht; Fokus, solange ein Timer läuft; Nacht im Fenster "
-            "{quiet}; Tagesplan, solange heute noch eine Session bevorsteht, im Fenster {agenda}; "
-            "Morgen, solange morgen Sessions geplant sind, im Fenster {tomorrow}; sonst "
-            "Klassisch. Alle anderen Layouts werden nie automatisch gewählt."
+            "Serien-Meilenstein an einem runden Tag; Sitzungs-Abschluss, {recap}; Prüfung, wenn "
+            "die nächste Prüfung in höchstens {days} Tagen ansteht; Fokus, solange ein Timer "
+            "läuft; Nacht im Fenster {quiet}; Tagesplan, solange heute noch eine Session "
+            "bevorsteht, im Fenster {agenda}; Morgen, solange morgen Sessions geplant sind, im "
+            "Fenster {tomorrow}; sonst Klassisch. Alle anderen Layouts werden nie automatisch "
+            "gewählt."
         ),
         "auto_off": "aus",
+        "auto_recap_after": "bis {minutes} Minuten nach dem Ende einer Session",
+        "auto_recap_off": "aus",
         "options_heading": "Duo",
         "duo_label": "Duo: zwei Layouts nebeneinander",
         "duo_left": "links",
@@ -274,6 +277,16 @@ WEB_TEXT: dict[str, dict[str, str]] = {
             "Das Minimalbild für die Nacht, z. B. „22-23“ als die Stunde vor der Ruhezeit, "
             "damit das Bild, das über Nacht bleibt, das ruhige ist; leer = Regel aus."
         ),
+        "settings_auto_recap_minutes": "Automatik: Abschluss nach einer Session (Minuten)",
+        "settings_auto_recap_minutes_hint": (
+            "So viele Minuten nach dem Ende einer Session zeigt Automatisch den "
+            "Sitzungs-Abschluss, solange kein Timer läuft (0–240); 0 = Regel aus. Das Display "
+            "aktualisiert alle 5 Minuten, der Abschluss erscheint also bis zu 5 Minuten nach "
+            "dem Ende."
+        ),
+        "settings_auto_recap_minutes_invalid": (
+            "muss eine ganze Zahl von 0 bis 240 sein, nicht {value}"
+        ),
         "settings_update_check": "Auf neue Version prüfen (fragt GitHub, alle 6 h)",
         "settings_source_file": "aus settings.json",
         "settings_source_env": "aus Umgebung/Standard",
@@ -313,13 +326,15 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "auto_description": "Picks the fitting layout on every refresh.",
         "auto_rules": (
             "Automatic means, in this order: weekly review inside the window {review}; streak "
-            "milestone on a round-number day; exam when the next exam is at most {days} days "
-            "away; focus while a timer runs; night inside the window {quiet}; agenda while a "
-            "session planned for today still lies ahead, inside the window {agenda}; tomorrow "
-            "while tomorrow has sessions planned, inside the window {tomorrow}; otherwise "
-            "classic. Every other layout is never picked automatically."
+            "milestone on a round-number day; session recap, {recap}; exam when the next exam "
+            "is at most {days} days away; focus while a timer runs; night inside the window "
+            "{quiet}; agenda while a session planned for today still lies ahead, inside the "
+            "window {agenda}; tomorrow while tomorrow has sessions planned, inside the window "
+            "{tomorrow}; otherwise classic. Every other layout is never picked automatically."
         ),
         "auto_off": "off",
+        "auto_recap_after": "for up to {minutes} minutes after a session ends",
+        "auto_recap_off": "off",
         "options_heading": "Duo",
         "duo_label": "Duo: two layouts side by side",
         "duo_left": "left",
@@ -434,6 +449,13 @@ WEB_TEXT: dict[str, dict[str, str]] = {
             "The minimal night frame, e.g. “22-23” as the hour before the quiet hours, so the "
             "frame that stays up all night is the calm one; empty = rule off."
         ),
+        "settings_auto_recap_minutes": "Auto: recap after a session (minutes)",
+        "settings_auto_recap_minutes_hint": (
+            "For this many minutes after a session ends, automatic shows the session recap "
+            "while no timer runs (0-240); 0 = rule off. The display refreshes every 5 "
+            "minutes, so the recap appears up to 5 minutes after the end."
+        ),
+        "settings_auto_recap_minutes_invalid": "must be a whole number from 0 to 240, not {value}",
         "settings_update_check": "Check for a newer release (asks GitHub every 6 h)",
         "settings_source_file": "from settings.json",
         "settings_source_env": "from environment/default",
@@ -794,6 +816,16 @@ class WebApp:
             values["rotate"] = int(rotate_raw)
         except ValueError:
             errors["rotate"] = f"must be one of {ROTATIONS}, not {rotate_raw!r}"
+        # Absent (an older client posting the previous form) leaves the value untouched; a
+        # present but non-numeric one is an error, like a rotation that does not parse.
+        if "auto_recap_minutes" in form:
+            recap_raw = form["auto_recap_minutes"].strip()
+            try:
+                values["auto_recap_minutes"] = int(recap_raw)
+            except ValueError:
+                errors["auto_recap_minutes"] = self.text[
+                    "settings_auto_recap_minutes_invalid"
+                ].format(value=repr(recap_raw))
         for key, value in values.items():
             try:
                 WebOverrides.model_validate({key: value})
@@ -904,6 +936,11 @@ class WebApp:
             agenda=settings.display_auto_agenda or t["auto_off"],
             tomorrow=settings.display_auto_tomorrow or t["auto_off"],
             quiet=settings.display_auto_quiet or t["auto_off"],
+            recap=(
+                t["auto_recap_after"].format(minutes=settings.display_auto_recap_minutes)
+                if settings.display_auto_recap_minutes
+                else t["auto_recap_off"]
+            ),
         )
         parts.append(f"<p class='note'>{html.escape(rules)}</p>")
         parts.append(f"<p class='note'>{html.escape(t['full_refresh_note'])}</p>")
@@ -1009,6 +1046,7 @@ class WebApp:
             "auto_agenda": settings.display_auto_agenda,
             "auto_tomorrow": settings.display_auto_tomorrow,
             "auto_quiet": settings.display_auto_quiet,
+            "auto_recap_minutes": settings.display_auto_recap_minutes,
         }
         if submitted:
             values.update(submitted)
@@ -1072,6 +1110,15 @@ class WebApp:
                 f"value='{html.escape(str(values[key]), quote=True)}'>"
                 f"{error(key)}<small>{html.escape(t['settings_' + key + '_hint'])}</small>"
             )
+        parts.append(
+            f"<label for='auto_recap_minutes'>{html.escape(t['settings_auto_recap_minutes'])}"
+            f"{source('auto_recap_minutes')}</label>"
+            f"<input id='auto_recap_minutes' name='auto_recap_minutes' type='number' min='0' "
+            f"max='240' step='1' "
+            f"value='{html.escape(str(values['auto_recap_minutes']), quote=True)}'>"
+            f"{error('auto_recap_minutes')}"
+            f"<small>{html.escape(t['settings_auto_recap_minutes_hint'])}</small>"
+        )
         checked = " checked" if values["update_check"] else ""
         parts.append(
             f"<label><input type='checkbox' name='update_check'{checked}> "

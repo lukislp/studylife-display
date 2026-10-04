@@ -7,15 +7,19 @@ any of this, in `main.refresh_panel`):
 1. `review` inside the review window (`DISPLAY_AUTO_REVIEW`, default Sunday 18:00-24:00);
 2. `milestone` on the one day the streak hits a round number (`milestone.MILESTONE_DAYS`) -
    rare enough, and worth seeing right away, that it outranks even an exam countdown;
-3. `exam` when the next course goal is due within EXAM_SOON_DAYS;
-4. `focus` while a timer is running;
-5. `quiet` inside the quiet window (`DISPLAY_AUTO_QUIET`, off by default) - meant for the
+3. `recap` for `DISPLAY_AUTO_RECAP_MINUTES` (default 10, 0 = off) after a study session
+   ended, unless a timer is running again - the moment after a session is the one the
+   figures matter, so it outranks the exam countdown for those few minutes. The panel
+   refreshes every 5 minutes, so the recap shows up within 5 minutes of the session's end;
+4. `exam` when the next course goal is due within EXAM_SOON_DAYS;
+5. `focus` while a timer is running;
+6. `quiet` inside the quiet window (`DISPLAY_AUTO_QUIET`, off by default) - meant for the
    hour before the quiet hours, so the frame that stays on all night is the calm one;
-6. `agenda` while a session planned for today still lies ahead and the wall clock is inside
+7. `agenda` while a session planned for today still lies ahead and the wall clock is inside
    the agenda window (`DISPLAY_AUTO_AGENDA`, default 06:00-12:00);
-7. `tomorrow` while tomorrow has sessions planned and the wall clock is inside the tomorrow
+8. `tomorrow` while tomorrow has sessions planned and the wall clock is inside the tomorrow
    window (`DISPLAY_AUTO_TOMORROW`, default 18:00-23:00);
-8. `classic` otherwise. Every other layout is never picked automatically.
+9. `classic` otherwise. Every other layout is never picked automatically.
 
 An empty window switches that rule off. The windows travel in `AutoRules`, built from the
 settings by `rules_from_settings`, so this module stays free of I/O and of the clock: the
@@ -46,6 +50,7 @@ DEFAULT_REVIEW_WINDOW = "sun 18-24"
 DEFAULT_AGENDA_WINDOW = "06-12"
 DEFAULT_TOMORROW_WINDOW = "18-23"
 DEFAULT_QUIET_WINDOW = ""
+DEFAULT_RECAP_MINUTES = 10
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,7 @@ class AutoRules:
     agenda_window: str = DEFAULT_AGENDA_WINDOW
     tomorrow_window: str = DEFAULT_TOMORROW_WINDOW
     quiet_window: str = DEFAULT_QUIET_WINDOW
+    recap_minutes: int = DEFAULT_RECAP_MINUTES
 
 
 DEFAULT_RULES = AutoRules()
@@ -67,7 +73,18 @@ def rules_from_settings(settings: Settings) -> AutoRules:
         agenda_window=settings.display_auto_agenda,
         tomorrow_window=settings.display_auto_tomorrow,
         quiet_window=settings.display_auto_quiet,
+        recap_minutes=settings.display_auto_recap_minutes,
     )
+
+
+def recap_applies(data: DashboardData, rules: AutoRules) -> bool:
+    """A session ended at most `recap_minutes` ago and no timer is running."""
+    session = data.last_session
+    if rules.recap_minutes <= 0 or session is None:
+        return False
+    if data.timer is not None and data.timer.is_running:
+        return False
+    return session.minutes_ago <= rules.recap_minutes
 
 
 def resolve_layout(choice: str, data: DashboardData, rules: AutoRules = DEFAULT_RULES) -> str:
@@ -83,6 +100,8 @@ def resolve_layout(choice: str, data: DashboardData, rules: AutoRules = DEFAULT_
         return "review"
     if is_milestone(data.streak_days):
         return "milestone"
+    if recap_applies(data, rules):
+        return "recap"
     goal = data.next_goal
     if goal is not None and goal.days_left <= EXAM_SOON_DAYS:
         return "exam"

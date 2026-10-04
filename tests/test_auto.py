@@ -17,6 +17,7 @@ from studylife_display.layouts.auto import (
 from studylife_display.model import (
     AgendaItem,
     DashboardData,
+    FinishedSession,
     NextGoal,
     TimerInfo,
     build_dashboard,
@@ -271,3 +272,69 @@ class TestRuleSettings:
                     studylife_base_url="https://studylife.test",  # type: ignore[arg-type]
                     display_duo=bad,
                 )
+
+
+def finished(data: DashboardData, minutes_ago: int) -> DashboardData:
+    """`data` with a session that ended `minutes_ago` minutes before its now."""
+    end = data.now - timedelta(minutes=minutes_ago)
+    session = FinishedSession(end - timedelta(hours=1), end, "Algebra", "Kapitel 3", minutes_ago)
+    return replace(data, last_session=session)
+
+
+class TestRecapRule:
+    def test_fires_inside_the_window_when_no_timer_runs(self, quiet: DashboardData) -> None:
+        assert resolve_layout("auto", finished(quiet, 0)) == "recap"
+        assert resolve_layout("auto", finished(quiet, 4)) == "recap"
+        assert resolve_layout("auto", finished(quiet, 10)) == "recap"  # the boundary counts
+
+    def test_not_after_the_window(self, quiet: DashboardData) -> None:
+        assert resolve_layout("auto", finished(quiet, 11)) == "classic"
+        assert resolve_layout("auto", finished(quiet, 600)) == "classic"
+
+    def test_not_without_a_finished_session(self, quiet: DashboardData) -> None:
+        assert resolve_layout("auto", replace(quiet, last_session=None)) == "classic"
+
+    def test_not_while_a_timer_runs(self, data: DashboardData) -> None:
+        assert data.timer is not None and data.timer.is_running
+        assert resolve_layout("auto", finished(data, 3)) == "focus"
+
+    def test_zero_switches_the_rule_off(self, quiet: DashboardData) -> None:
+        assert resolve_layout("auto", finished(quiet, 0), AutoRules(recap_minutes=0)) == "classic"
+
+    def test_a_custom_window(self, quiet: DashboardData) -> None:
+        rules = AutoRules(recap_minutes=30)
+        assert resolve_layout("auto", finished(quiet, 30), rules) == "recap"
+        assert resolve_layout("auto", finished(quiet, 31), rules) == "classic"
+
+    def test_the_sample_session_is_long_over(self, data: DashboardData) -> None:
+        # The sample newest session ended at 12:45, four hours before FIXED_NOW.
+        assert data.last_session is not None
+        assert data.last_session.minutes_ago == 4 * 60
+        assert resolve_layout("auto", replace(data, timer=None, agenda=())) != "recap"
+
+    def test_order_after_review_and_milestone_but_before_exam_and_focus(
+        self, quiet: DashboardData, data: DashboardData
+    ) -> None:
+        sunday = finished(at(quiet, SUNDAY.replace(hour=19)), 2)
+        assert resolve_layout("auto", sunday) == "review"
+        milestone = replace(finished(quiet, 2), streak_days=30)
+        assert resolve_layout("auto", milestone) == "milestone"
+        soon = replace(finished(quiet, 2), next_goal=NextGoal("Algebra", 3, None))
+        assert resolve_layout("auto", soon) == "recap"
+        assert resolve_layout("auto", replace(soon, last_session=None)) == "exam"
+        # A running timer still blocks it by its own condition: focus (or exam) wins.
+        busy = replace(finished(data, 2), next_goal=None)
+        assert resolve_layout("auto", busy) == "focus"
+
+    def test_beats_quiet_agenda_and_tomorrow(self, quiet: DashboardData) -> None:
+        rules = AutoRules(quiet_window="06-23", agenda_window="06-23", tomorrow_window="06-23")
+        assert resolve_layout("auto", finished(quiet, 1), rules) == "recap"
+
+    def test_rules_from_settings_reads_the_minutes(self) -> None:
+        settings = Settings(
+            studylife_base_url="https://studylife.test",  # type: ignore[arg-type]
+            display_auto_recap_minutes=45,
+        )
+        assert rules_from_settings(settings).recap_minutes == 45
+        default = Settings(studylife_base_url="https://studylife.test")  # type: ignore[arg-type]
+        assert rules_from_settings(default).recap_minutes == 10

@@ -57,6 +57,7 @@ empty = no session, light hatch = under 1 h, dense hatch = under 2.5 h, solid = 
 | `achievements` | Unlocked of all achievements from `GET /api/metrics/achievements` (scope `Metrics.GetAchievements`) with a progress bar, the latest tier reached, the next one with its progress, and the tiers per category. Never picked by `auto` | ![achievements](docs/preview-achievements.png) |
 | `note` | The newest note from `GET /api/notes` (scope `Notes.GetAll`) as a study sheet: title, a word-wrapped plain-text excerpt (the server's summary when there is one) and when it was updated, plus the next two notes' titles. Never picked by `auto` | ![note](docs/preview-note.png) |
 | `quiet` | The minimal frame for the night: weekday and date large, the streak, tomorrow's first session, lots of white. Picked by `auto` inside the night window (see below), never otherwise | ![quiet](docs/preview-quiet.png) |
+| `recap` | The session recap ("Sitzungs-Abschluss" / "Session recap"): the duration of the newest finished session of the history as `H:MM`, large, with its course and topic and "vor 4 min beendet"; under it today's hours, the streak and the week target (percent with a small bar); the footer names the next planned session of today ("Als Nächstes 14:00 Kurs"), else the week target. "noch keine Sitzung" without any. Never picked by `auto` except for a few minutes after a session ended (rule 3 below) | ![recap](docs/preview-recap.png) |
 | `duo` | Two layouts side by side, each in its compact pane form, with the layout names above the halves; which two is `DISPLAY_DUO` / the duo setting (default `focus,agenda`). Every layout but `duo` itself has a pane. Never picked by `auto` | ![duo](docs/preview-duo.png) |
 
 Every layout keeps the header line (date, "aktualisiert HH:MM" and the stale marker), because
@@ -69,17 +70,24 @@ error screens are decided before any of them):
    (`DISPLAY_AUTO_REVIEW=sun 18-24`);
 2. otherwise `milestone` on the one day the streak hits a round number (see the table above) -
    rare enough, and worth seeing right away, that it outranks even an exam countdown;
-3. otherwise `exam` when the next course goal is due in **7 days or fewer** (today, overdue
+3. otherwise `recap` for **10 minutes after a study session ended**
+   (`DISPLAY_AUTO_RECAP_MINUTES=10`, `0` = off, at most 240) - unless a timer is running
+   again. The moment after a session is when its figures matter, so it outranks the exam
+   countdown for those few minutes and then hands over to the normal rules. The panel
+   refreshes every 5 minutes (see [Refresh cadence](#refresh-cadence-and-why-full-refresh-only)),
+   so the recap appears within 5 minutes of the end of a session, not at the second it ends,
+   and a short window may be missed between two refreshes - use at least 5;
+4. otherwise `exam` when the next course goal is due in **7 days or fewer** (today, overdue
    and negative counts included);
-4. otherwise `focus` while a timer is running;
-5. otherwise `quiet` inside the night window - **off by default** (`DISPLAY_AUTO_QUIET=`,
+5. otherwise `focus` while a timer is running;
+6. otherwise `quiet` inside the night window - **off by default** (`DISPLAY_AUTO_QUIET=`,
    e.g. `22-23` for the hour before the quiet hours, so the frame that stays up all night is
    the calm one);
-6. otherwise `agenda` while at least one session planned for today has not ended yet and the
+7. otherwise `agenda` while at least one session planned for today has not ended yet and the
    time is inside the agenda window - by default **06:00 to 12:00** (`DISPLAY_AUTO_AGENDA=06-12`);
-7. otherwise `tomorrow` while tomorrow has sessions planned and the time is inside the
+8. otherwise `tomorrow` while tomorrow has sessions planned and the time is inside the
    tomorrow window - by default **18:00 to 23:00** (`DISPLAY_AUTO_TOMORROW=18-23`);
-8. otherwise `classic`.
+9. otherwise `classic`.
 
 The four windows use the quiet-hours notation with an optional list of weekdays in front
 (`sun`, `sat,sun`, `mon-fri`; `24` is allowed as the end, a window may not wrap past
@@ -221,7 +229,8 @@ detects that; connect first, enable the overlay afterwards.
 ### Settings in the web interface
 
 `Einstellungen` holds language, rotation, quiet hours, the daily clear time, the update
-check and the four windows of the auto rules (weekly review, agenda, tomorrow, night); the
+check, the four windows of the auto rules (weekly review, agenda, tomorrow, night) and the
+minutes of the recap rule; the
 layouts page itself holds the duo pair under the layout cards. They are saved into the
 same `settings.json` as the layout choice (so they survive a
 reboot the same way, see [SD-card protection](#sd-card-protection)), validated with the
@@ -290,7 +299,7 @@ second, separate opt-in from the web interface:
 | `/api/current.png` | GET | The frame that is on the panel right now (PNG), like the cookie route; 404 before the first one. |
 | `/api/preview/<key>.png` | GET | A preview of `<key>` rendered from the cached data (PNG); 404 for an unknown key. |
 | `/api/settings` | GET | `{"values", "sources", "readonly"}` - the settings page's fields, which key came from `settings.json` vs. the environment, and the environment-only fields as `{"set": bool, "value": str\|null}` (a secret such as the API key or either token is `"set"` only, never shown). |
-| `/api/settings` | POST | A JSON object with any subset of `language`, `rotate`, `quiet_hours`, `clear_at`, `update_check`, `auto_review`, `auto_agenda`, `auto_tomorrow`, `auto_quiet`, `duo` (the last one as a comma string or a list of keys) - unlike the web form (which always resubmits every field), an omitted key is left untouched and an explicit `null` resets that one key to the environment value. Validated with the same rules as the environment; an invalid value or an unknown field is a 400 and nothing is written. |
+| `/api/settings` | POST | A JSON object with any subset of `language`, `rotate`, `quiet_hours`, `clear_at`, `update_check`, `auto_review`, `auto_agenda`, `auto_tomorrow`, `auto_quiet`, `auto_recap_minutes` (an integer, 0 to 240), `duo` (the last one as a comma string or a list of keys) - unlike the web form (which always resubmits every field), an omitted key is left untouched and an explicit `null` resets that one key to the environment value. Validated with the same rules as the environment; an invalid value or an unknown field is a 400 and nothing is written. |
 | `/api/settings/reset` | POST | Resets every settings.json field to the environment values, like "Reset"/"Auf Umgebungswerte zurücksetzen". |
 | `/api/connect` | GET | `{"identity", "pending", "overlay_warning", "mode", "redirect_uri", "client_id", "scopes"}` - the connect page's state as data. `identity` is `{"connected": bool, "instance", "user_id", "credential", "error"}` from `GET /api/auth/whoami`. |
 | `/api/connect/start` | POST | Begins a connect attempt, like "Start connecting"; returns `{"connect_url", "redirect_uri", "expires_at"}`. |
@@ -369,11 +378,12 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 | `DISPLAY_CLEAR_AT` | `04:00` | Time of the daily full clear against ghosting; empty = off (*web*) |
 | `DISPLAY_UPDATE_CHECK` | `false` | Let the web interface ask GitHub (once per 6 h) whether a newer release exists (*web*) |
 | `DISPLAY_AUTO_UPDATE` | `false` | Let `studylife-display-update.timer` install a newer release once a day, unattended; see [Updating](#updating) |
-| `DISPLAY_LAYOUT` | `auto` | `auto` or any layout key from [Layouts](#layouts) (`classic`, `focus`, `exam`, `week`, `degree`, `agenda`, `review`, `courses`, `milestone`, `month`, `exams`, `year`, `balance`, `timer`, `tomorrow`, `today`, `goals`, `achievements`, `note`, `quiet`, `duo`); overridden by the choice made in the web interface |
+| `DISPLAY_LAYOUT` | `auto` | `auto` or any layout key from [Layouts](#layouts) (`classic`, `focus`, `exam`, `week`, `degree`, `agenda`, `review`, `courses`, `milestone`, `month`, `exams`, `year`, `balance`, `timer`, `tomorrow`, `today`, `goals`, `achievements`, `note`, `quiet`, `recap`, `duo`); overridden by the choice made in the web interface |
 | `DISPLAY_AUTO_REVIEW` | `sun 18-24` | Window of the `review` rule in `auto`: `[weekdays] HH-HH` or `HH:MM-HH:MM` (`24` = midnight, no wrap past midnight); empty = rule off (*web*) |
 | `DISPLAY_AUTO_AGENDA` | `06-12` | Window of the `agenda` rule in `auto`, same notation; empty = rule off (*web*) |
 | `DISPLAY_AUTO_TOMORROW` | `18-23` | Window of the `tomorrow` rule in `auto`, same notation; empty = rule off (*web*) |
 | `DISPLAY_AUTO_QUIET` | – | Window of the `quiet` rule in `auto`, same notation; empty = rule off (*web*) |
+| `DISPLAY_AUTO_RECAP_MINUTES` | `10` | How many minutes after a session ended `auto` shows the `recap` layout (while no timer runs); `0` = rule off, `240` at most (*web*) |
 | `DISPLAY_DUO` | `focus,agenda` | The two halves of the `duo` layout, `left,right`, two different layout keys (*web*, on the layouts page) |
 | `DISPLAY_PERSIST_PATH` | `/boot/firmware/studylife-display/settings.json` | Copy of the web interface's choice on the boot partition, restored at boot (see [SD-card protection](#sd-card-protection)); empty disables it |
 | `DISPLAY_WEB_BIND` | `0.0.0.0:8795` | Where `serve` listens |

@@ -356,6 +356,7 @@ class TestSettings:
             "auto_agenda": False,
             "auto_tomorrow": False,
             "auto_quiet": False,
+            "auto_recap_minutes": False,
             "duo": False,
         }
         assert body["values"]["duo"] == "focus,agenda"
@@ -383,6 +384,33 @@ class TestSettings:
         # WebOverrides is strict: "0" is not accepted where an int belongs.
         status, _ = client.json("POST", "/api/settings", {"rotate": "0"})
         assert status == 400
+
+    def test_recap_minutes_round_trip_and_validation(
+        self, client: Client, settings: Settings
+    ) -> None:
+        _, body = client.json("GET", "/api/settings")
+        assert body["values"]["auto_recap_minutes"] == 10
+        status, body = client.json("POST", "/api/settings", {"auto_recap_minutes": 30})
+        assert status == 200
+        assert body["values"]["auto_recap_minutes"] == 30
+        assert body["sources"]["auto_recap_minutes"] is True
+        saved = json.loads(settings_path(settings).read_text(encoding="utf-8"))
+        assert saved == {"auto_recap_minutes": 30}
+        status, body = client.json("POST", "/api/settings", {"auto_recap_minutes": 0})
+        assert status == 200 and body["values"]["auto_recap_minutes"] == 0
+        for bad in (241, -1, "10", 2.5):
+            status, _ = client.json("POST", "/api/settings", {"auto_recap_minutes": bad})
+            assert status == 400, bad
+        status, body = client.json("POST", "/api/settings", {"auto_recap_minutes": None})
+        assert body["values"]["auto_recap_minutes"] == 10
+        assert body["sources"]["auto_recap_minutes"] is False
+
+    def test_reset_clears_the_recap_minutes(self, client: Client) -> None:
+        client.json("POST", "/api/settings", {"auto_recap_minutes": 99})
+        status, body = client.json("POST", "/api/settings/reset")
+        assert status == 200
+        assert body["values"]["auto_recap_minutes"] == 10
+        assert body["sources"]["auto_recap_minutes"] is False
 
     def test_post_rejects_an_unknown_field(self, client: Client) -> None:
         status, body = client.json("POST", "/api/settings", {"layout": "week"})

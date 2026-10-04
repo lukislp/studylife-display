@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -19,6 +19,7 @@ from studylife_display.layouts.week import QUOTA_BAR_BOX
 from studylife_display.model import (
     AgendaItem,
     DashboardData,
+    FinishedSession,
     Forecast,
     TimerInfo,
     WeeklyReport,
@@ -299,12 +300,21 @@ class TestGoldens:
             ("achievements", "de"),
             ("note", "de"),
             ("quiet", "de"),
+            ("recap", "de"),
             ("duo", "de"),
         ],
     )
     def test_matches_golden(
         self, data: DashboardData, layout: str, language: str, update_goldens: bool
     ) -> None:
+        if layout == "recap":
+            # The sample history ends hours before FIXED_NOW; the recap golden shows a
+            # session that ended four minutes earlier.
+            end = data.now - timedelta(minutes=4)
+            session = FinishedSession(
+                end - timedelta(minutes=86), end, "Betriebssysteme", "Scheduling", 4
+            )
+            data = replace(data, last_session=session)
         image = render(data, language, layout)
         golden_path = GOLDEN_DIR / f"{layout}_{language}.png"
         if update_goldens:

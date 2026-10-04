@@ -38,6 +38,7 @@ LAYOUT_CHOICES = (
     "achievements",
     "note",
     "quiet",
+    "recap",
     "duo",
 )
 # The real layouts (what a duo half may show).
@@ -87,6 +88,7 @@ LayoutChoice = Literal[
     "achievements",
     "note",
     "quiet",
+    "recap",
     "duo",
 ]
 
@@ -117,6 +119,17 @@ def check_clear_at(value: str) -> str:
 def check_auto_window(value: str) -> str:
     parse_rule_window(value)  # raises ValueError with the reason
     return value.strip()
+
+
+MAX_RECAP_MINUTES = 240
+
+
+def check_recap_minutes(value: int) -> int:
+    if not 0 <= value <= MAX_RECAP_MINUTES:
+        raise ValueError(
+            f"DISPLAY_AUTO_RECAP_MINUTES must be between 0 and {MAX_RECAP_MINUTES}, not {value}"
+        )
+    return value
 
 
 def parse_layout_list(value: str, name: str) -> tuple[str, ...]:
@@ -248,6 +261,10 @@ class Settings(BaseSettings):
     # so that the frame that stays on all night is the calm one. Off by default.
     display_auto_tomorrow: str = "18-23"
     display_auto_quiet: str = ""
+    # The recap rule: for this many minutes after a study session ended (and while no timer
+    # runs) `auto` shows the `recap` layout. 0 switches the rule off. The panel refreshes
+    # every 5 minutes, so the recap shows up within 5 minutes of the end of a session.
+    display_auto_recap_minutes: int = 10
 
     # The "duo" layout shows two layouts side by side, each in its compact pane form:
     # `left,right` (two different concrete layout keys; see check_duo).
@@ -338,6 +355,11 @@ class Settings(BaseSettings):
     def _auto_window(cls, value: str) -> str:
         return check_auto_window(value)
 
+    @field_validator("display_auto_recap_minutes")
+    @classmethod
+    def _recap_minutes(cls, value: int) -> int:
+        return check_recap_minutes(value)
+
     @field_validator("display_duo")
     @classmethod
     def _duo(cls, value: str) -> str:
@@ -371,6 +393,7 @@ class WebOverrides(BaseModel):
     auto_agenda: str | None = None
     auto_tomorrow: str | None = None
     auto_quiet: str | None = None
+    auto_recap_minutes: int | None = None
     duo: str | None = None
 
     @field_validator("layout", mode="before")
@@ -403,6 +426,11 @@ class WebOverrides(BaseModel):
     def _auto_window(cls, value: str | None) -> str | None:
         return None if value is None else check_auto_window(value)
 
+    @field_validator("auto_recap_minutes")
+    @classmethod
+    def _recap_minutes(cls, value: int | None) -> int | None:
+        return None if value is None else check_recap_minutes(value)
+
     def as_json(self) -> dict[str, Any]:
         """Only the fields that are set, in a stable order."""
         return {key: value for key, value in self.model_dump().items() if value is not None}
@@ -420,6 +448,7 @@ OVERRIDE_FIELDS: dict[str, str] = {
     "auto_agenda": "display_auto_agenda",
     "auto_tomorrow": "display_auto_tomorrow",
     "auto_quiet": "display_auto_quiet",
+    "auto_recap_minutes": "display_auto_recap_minutes",
     "duo": "display_duo",
 }
 

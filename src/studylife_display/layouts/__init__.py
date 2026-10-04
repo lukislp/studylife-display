@@ -34,6 +34,7 @@ from studylife_display.layouts import (
     month,
     note,
     quiet,
+    recap,
     review,
     timer,
     today,
@@ -373,6 +374,23 @@ LAYOUTS: dict[str, LayoutSpec] = {
                 ),
             },
             render=quiet.render,
+        ),
+        LayoutSpec(
+            key="recap",
+            name={"de": "Sitzungs-Abschluss", "en": "Session recap"},
+            description={
+                "de": (
+                    "Direkt nach einer Session: ihre Dauer groß mit Kurs und Thema, dazu "
+                    "Stunden heute, Serie und Wochenziel; nie automatisch gewählt, außer "
+                    "kurz nach dem Ende einer Session."
+                ),
+                "en": (
+                    "Right after a session: its duration, large, with course and topic, plus "
+                    "today's hours, streak and week target; never picked automatically except "
+                    "right after a session ends."
+                ),
+            },
+            render=recap.render,
         ),
         LayoutSpec(
             key=DUO,
