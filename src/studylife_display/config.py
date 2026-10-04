@@ -39,6 +39,7 @@ LAYOUT_CHOICES = (
     "note",
     "quiet",
     "recap",
+    "calendar",
     "duo",
 )
 # The real layouts (what a duo half may show).
@@ -89,6 +90,7 @@ LayoutChoice = Literal[
     "note",
     "quiet",
     "recap",
+    "calendar",
     "duo",
 ]
 

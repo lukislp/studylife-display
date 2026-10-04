@@ -22,6 +22,7 @@ from studylife_display.layouts import (
     achievements,
     agenda,
     balance,
+    calendar,
     classic,
     courses,
     degree,
@@ -391,6 +392,25 @@ LAYOUTS: dict[str, LayoutSpec] = {
                 ),
             },
             render=recap.render,
+        ),
+        LayoutSpec(
+            key="calendar",
+            name={"de": "Wochenkalender", "en": "Week calendar"},
+            description={
+                "de": (
+                    "Die Woche als Kalender: sieben Spalten Montag bis Sonntag, jede Session "
+                    "als Block nach Start und Ende (geplant schraffiert, erledigt voll), "
+                    "Prüfungstage markiert, die Jetzt-Linie in der Spalte von heute (Scope "
+                    "Sessions.GetAll); nie automatisch gewählt."
+                ),
+                "en": (
+                    "The week as a calendar: seven columns Monday to Sunday, every session as "
+                    "a block by start and end (planned hatched, completed solid), exam days "
+                    "marked, a now-line in today's column (scope Sessions.GetAll); never "
+                    "picked automatically."
+                ),
+            },
+            render=calendar.render,
         ),
         LayoutSpec(
             key=DUO,

@@ -301,6 +301,7 @@ class TestGoldens:
             ("note", "de"),
             ("quiet", "de"),
             ("recap", "de"),
+            ("calendar", "de"),
             ("duo", "de"),
         ],
     )
@@ -315,6 +316,26 @@ class TestGoldens:
                 end - timedelta(minutes=86), end, "Betriebssysteme", "Scheduling", 4
             )
             data = replace(data, last_session=session)
+        if layout == "calendar":
+            # The sample plans nothing before Thursday and no exam in this week; add three
+            # completed sessions on Monday to Wednesday and an exam on Friday.
+            monday = data.now.replace(hour=0, minute=0) - timedelta(days=data.now.weekday())
+            earlier = tuple(
+                AgendaItem(
+                    monday + timedelta(days=day, hours=start),
+                    monday + timedelta(days=day, hours=start + length),
+                    "Lineare Algebra",
+                    None,
+                    True,
+                    False,
+                )
+                for day, start, length in ((0, 9, 2), (1, 14, 1.5), (2, 10, 2.5))
+            )
+            data = replace(
+                data,
+                week_calendar=earlier + data.week_calendar,
+                week_goal_days=((4, "Betriebssysteme"),),
+            )
         image = render(data, language, layout)
         golden_path = GOLDEN_DIR / f"{layout}_{language}.png"
         if update_goldens:
