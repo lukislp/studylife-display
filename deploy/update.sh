@@ -156,6 +156,11 @@ EOF
     studylife-display-update.timer studylife-display-web.service >/dev/null 2>&1 || true
   systemctl start studylife-display-credentials.path >/dev/null 2>&1 || true
 
+  echo "==> mDNS advertisement (port, TLS flag and version stay current)"
+  # Rewritten on every update from the env file and the new version; the script of the tag
+  # just checked out runs, and it never fails (no avahi services directory = a log line).
+  bash "$SRC/deploy/avahi-service.sh" || echo "    note: the mDNS advertisement could not be written"
+
   echo "==> restarting the web interface and refreshing the panel once"
   systemctl restart studylife-display-web.service
   systemctl start studylife-display.service \

@@ -310,6 +310,32 @@ second, separate opt-in from the web interface:
 same panel lock as the cookie routes, so a change from either surface is visible on the
 other one and a refresh from the API waits for one already in progress the same way.
 
+#### Discovery
+
+The Pi already answers `<hostname>.local` through avahi. On top of that the installer
+advertises one DNS-SD service, so Home Assistant's zeroconf can find the display without
+anyone typing an address:
+
+| | |
+| --- | --- |
+| Service type | `_studylife-display._tcp` |
+| Instance name | `StudyLife Display (<hostname>)` |
+| Port | the port of `DISPLAY_WEB_BIND` (default `8795`) |
+| TXT `version` | the installed package version (the release tag) |
+| TXT `tls` | `true` when `DISPLAY_TLS` is on, else `false` |
+| TXT `api` | `true` when `DISPLAY_API_TOKEN` is set (the JSON API is on), else `false` - the token itself is never advertised |
+| TXT `path` | `/` |
+
+The service file is `/etc/avahi/services/studylife-display.service`, written by
+`deploy/avahi-service.sh`, which `install.sh` and `update.sh` both run: it is regenerated on
+every update, and only touched when its content changes, so the port, the TLS flag and the
+version stay current. Without avahi's services directory the step logs that it was skipped
+and moves on; it never fails an install or an update. After changing `DISPLAY_WEB_BIND`,
+`DISPLAY_TLS` or `DISPLAY_API_TOKEN` by hand, `sudo bash
+/opt/studylife-display/src/deploy/avahi-service.sh` refreshes it without an update; avahi
+picks the file up by itself. `avahi-browse -rt _studylife-display._tcp` on any machine of the
+network lists it.
+
 ## Hardware
 
 - Raspberry Pi 3 Model A+ (any Pi with the 40-pin header works; the 3A+ is small, fanless and
@@ -491,7 +517,8 @@ sudo bash /opt/studylife-display/src/deploy/update.sh --tag v1.3.0
 The script asks GitHub for the latest release (no token needed), fetches the tags, checks
 the tag out under `/opt/studylife-display/src`, reinstalls the package into the virtualenv,
 re-installs the unit files from `deploy/` (so a unit added by the release lands), reloads
-systemd, restarts the web service and runs one refresh. Running it on the tag that is
+systemd, rewrites the [mDNS advertisement](#discovery) (port, TLS flag and version), restarts
+the web service and runs one refresh. Running it on the tag that is
 already installed does nothing but say so; `--force` reinstalls anyway. The version the
 web footer and `/healthz` report is the tag the checkout sits on.
 
