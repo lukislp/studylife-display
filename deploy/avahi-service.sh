@@ -7,11 +7,12 @@
 # _studylife-display._tcp, named "StudyLife Display (<hostname>)", on the web interface's
 # port, with the TXT records
 #
-#   version=<package version>   tls=true|false   api=true|false   path=/
+#   version=<package version>   tls=true|false   api=true|false   path=/   id=<instance id>
 #
 # read from /etc/studylife-display.env (DISPLAY_WEB_BIND, DISPLAY_TLS, DISPLAY_API_TOKEN -
-# only whether the token is set, never its value) and from the installed package. Both
-# install.sh and update.sh run it, so the port, the TLS flag and the version stay current;
+# only whether the token is set, never its value) and from the installed package. `id` is
+# the display's stable instance id (studylife_display.instance; left out when it cannot be
+# computed). Both install.sh and update.sh run it, so the port, the TLS flag and the version stay current;
 # the file is only rewritten when its content changes, avahi picks the change up by itself.
 #
 # It never fails the caller: without avahi's services directory it says so and exits 0, and
@@ -21,12 +22,15 @@
 #   --dir DIR        avahi services directory   (default /etc/avahi/services)
 #   --env-file FILE  the environment file       (default /etc/studylife-display.env)
 #   --version V      the version to advertise   (default: asked of the installed package)
+#   --id ID          the instance id to advertise (default: asked of the installed package)
 set -uo pipefail
 
 SERVICES_DIR=/etc/avahi/services
 ENV_FILE=/etc/studylife-display.env
 VENV=/opt/studylife-display/venv
 VERSION=""
+INSTANCE_ID=""
+DEFAULT_STATE_PATH=/var/lib/studylife-display/last.json
 SERVICE_FILE=studylife-display.service
 DEFAULT_PORT=8795
 
@@ -68,7 +72,7 @@ xml_escape() {
 }
 
 render_service() {
-  local port="$1" version="$2" tls="$3" api="$4"
+  local port="$1" version="$2" tls="$3" api="$4" id="${5:-}"
   cat <<EOF
 <?xml version="1.0" standalone='no'?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
@@ -82,6 +86,7 @@ render_service() {
     <txt-record>tls=$tls</txt-record>
     <txt-record>api=$api</txt-record>
     <txt-record>path=/</txt-record>
+$([ -n "$id" ] && printf '    <txt-record>id=%s</txt-record>' "$id")
   </service>
 </service-group>
 EOF
@@ -96,6 +101,8 @@ main() {
       --env-file=*) ENV_FILE="${1#--env-file=}" ;;
       --version) VERSION="${2:-}"; shift ;;
       --version=*) VERSION="${1#--version=}" ;;
+      --id) INSTANCE_ID="${2:-}"; shift ;;
+      --id=*) INSTANCE_ID="${1#--id=}" ;;
       *) echo "    note: avahi-service.sh: ignoring unknown argument $1" ;;
     esac
     shift
@@ -111,6 +118,15 @@ main() {
   fi
   VERSION="${VERSION:-0.0.0}"
 
+  if [ -z "$INSTANCE_ID" ] && [ -x "$VENV/bin/python" ]; then
+    local state_path
+    state_path="$(env_value DISPLAY_STATE_PATH)"
+    INSTANCE_ID="$("$VENV/bin/python" -c 'import sys; from pathlib import Path; from studylife_display.instance import instance_id; print(instance_id(Path(sys.argv[1]).parent))' "${state_path:-$DEFAULT_STATE_PATH}" 2>/dev/null)" || INSTANCE_ID=""
+  fi
+  case "$INSTANCE_ID" in
+    ''|*[!0-9a-f]*) INSTANCE_ID="" ;;
+  esac
+
   local port tls=false api=false tmp target="$SERVICES_DIR/$SERVICE_FILE"
   port="$(port_of "$(env_value DISPLAY_WEB_BIND)")"
   if truthy "$(env_value DISPLAY_TLS)"; then
@@ -124,7 +140,7 @@ main() {
     echo "    note: cannot write to $SERVICES_DIR, skipping the mDNS advertisement"
     return 0
   }
-  render_service "$port" "$VERSION" "$tls" "$api" > "$tmp"
+  render_service "$port" "$VERSION" "$tls" "$api" "$INSTANCE_ID" > "$tmp"
   if [ -f "$target" ] && cmp -s "$tmp" "$target"; then
     rm -f "$tmp"
     echo "    mDNS advertisement up to date (_studylife-display._tcp, port $port)"
