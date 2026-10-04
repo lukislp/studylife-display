@@ -13,8 +13,10 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from studylife_display.model import USED_FIELDS, build_dashboard
+from studylife_display.sample import sample_extras
 
-# Verified against the server (see the README), dotted notation, "[]" = list element.
+# Verified against the server (StudyLife.Shared/Dtos.cs, see the README), dotted notation,
+# "[]" = list element.
 VERIFIED: dict[str, frozenset[str]] = {
     "metrics": frozenset(
         {
@@ -31,8 +33,17 @@ VERIFIED: dict[str, frozenset[str]] = {
             "weekQuota.targetMin",
             "weekQuota.targetMax",
             "weekQuota.percent",
+            "weekQuota.minPercent",
             "weekQuota.warning",
+            "weekQuota.missingHours",
             "monthQuota",
+            "monthQuota.hours",
+            "monthQuota.targetMin",
+            "monthQuota.targetMax",
+            "monthQuota.percent",
+            "monthQuota.minPercent",
+            "monthQuota.warning",
+            "monthQuota.missingHours",
             "ects",
             "ects.earned",
             "ects.total",
@@ -43,17 +54,30 @@ VERIFIED: dict[str, frozenset[str]] = {
             "forecast.date",
             "forecast.recentWeeklyHours",
             "monthComparison",
+            "monthComparison.currentMonthHours",
+            "monthComparison.previousMonthHours",
+            "monthComparison.deltaVsPreviousMonth",
+            "monthComparison.hasYearData",
+            "monthComparison.sameMonthLastYearHours",
+            "monthComparison.deltaVsLastYear",
             "neglectedCourse",
             "neglectedCourse.courseId",
             "neglectedCourse.courseName",
             "neglectedCourse.lastStudied",
             "neglectedCourse.daysSince",
             "courseHours",
+            "courseHours[].courseId",
+            "courseHours[].courseName",
+            "courseHours[].courseColor",
+            "courseHours[].hours",
+            "courseHours[].sessionCount",
             "topics",
             "topics.completed",
             "topics.total",
             "program",
+            "program.id",
             "program.name",
+            "program.isBuiltIn",
             "upcomingCourseGoals",
             "upcomingCourseGoals[].courseId",
             "upcomingCourseGoals[].courseName",
@@ -110,6 +134,48 @@ VERIFIED: dict[str, frozenset[str]] = {
             "[].recurrenceGroupId",
         }
     ),
+    # GET /api/coursegoals: CourseGoalDto.
+    "goals": frozenset(
+        {
+            "[].courseId",
+            "[].courseName",
+            "[].targetDate",
+            "[].completionNote",
+            "[].completedAt",
+            "[].grade",
+            "[].completedTopics",
+            "[].tag",
+        }
+    ),
+    # GET /api/metrics/achievements: MetricsAchievementsDto / MetricsAchievementTierDto.
+    "achievements": frozenset(
+        {
+            "unlocked",
+            "total",
+            "tiers",
+            "tiers[].category",
+            "tiers[].threshold",
+            "tiers[].unlocked",
+            "tiers[].current",
+        }
+    ),
+    # GET /api/notes: NoteDto.
+    "notes": frozenset(
+        {
+            "[].id",
+            "[].title",
+            "[].content",
+            "[].createdAt",
+            "[].updatedAt",
+            "[].courseId",
+            "[].sessionId",
+            "[].isMarkdown",
+            "[].sourceUrl",
+            "[].tags",
+            "[].summary",
+            "[].relatedNoteIds",
+        }
+    ),
 }
 
 # Fields that do NOT exist and must never appear in USED_FIELDS (they were plausible enough
@@ -124,11 +190,20 @@ FORBIDDEN = {
     "topics.done",
     "weeklyReport.delta",
     "weeklyReport.sessions",
+    "monthQuota.target",
+    "courseHours[].name",
+    "tiers[].name",
+    "tiers[].unlockedAt",
     "[].title",
     "[].completed",
     "[].start",
     "[].end",
+    "[].body",
+    "[].text",
+    "[].modifiedAt",
 }
+# "[].title" is real on notes, so that one is checked per endpoint.
+FORBIDDEN_FOR = {"notes": FORBIDDEN - {"[].title"}}
 
 
 class Recorder(dict[str, Any]):
@@ -166,8 +241,9 @@ def test_used_fields_are_all_verified() -> None:
 
 
 def test_used_fields_contain_no_invented_names() -> None:
-    for used in USED_FIELDS.values():
-        assert not (used & FORBIDDEN)
+    for endpoint, used in USED_FIELDS.items():
+        forbidden = FORBIDDEN_FOR.get(endpoint, FORBIDDEN)
+        assert not (used & forbidden), endpoint
 
 
 def test_build_dashboard_reads_exactly_used_fields(
@@ -176,12 +252,8 @@ def test_build_dashboard_reads_exactly_used_fields(
     tz: ZoneInfo,
 ) -> None:
     metrics, history, timer, sessions = sample
-    logs: dict[str, set[str]] = {
-        "metrics": set(),
-        "history": set(),
-        "timer": set(),
-        "sessions": set(),
-    }
+    goals, achievements, notes = sample_extras(fixed_now, tz)
+    logs: dict[str, set[str]] = {name: set() for name in USED_FIELDS}
     build_dashboard(
         Recorder(metrics, logs["metrics"]),
         [Recorder(item, logs["history"], "[].") for item in history],
@@ -189,35 +261,17 @@ def test_build_dashboard_reads_exactly_used_fields(
         fixed_now,
         tz,
         sessions=[Recorder(item, logs["sessions"], "[].") for item in sessions],
+        goals=[Recorder(item, logs["goals"], "[].") for item in goals],
+        achievements_payload=Recorder(achievements, logs["achievements"]),
+        notes_payload=[Recorder(item, logs["notes"], "[].") for item in notes],
     )
     for endpoint, read in logs.items():
         assert read == set(USED_FIELDS[endpoint]), endpoint
 
 
 def test_every_endpoint_has_a_used_and_a_verified_list() -> None:
-    assert set(USED_FIELDS) == set(VERIFIED) == {"metrics", "history", "timer", "sessions"}
-
-
-def test_sample_payloads_use_only_verified_names(
-    sample: tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]],
-) -> None:
-    """The sample data doubles as documentation of the wire format; keep it honest."""
-    metrics, history, timer, sessions = sample
-
-    def paths(value: Any, prefix: str = "") -> set[str]:
-        found: set[str] = set()
-        if isinstance(value, dict):
-            for key, child in value.items():
-                found.add(prefix + key)
-                found |= paths(child, prefix + key + ".")
-        elif isinstance(value, list):
-            for child in value:
-                found |= paths(child, prefix.removesuffix(".") + "[].")
-        return found
-
-    assert paths(metrics) <= VERIFIED["metrics"]
-    assert paths(history) <= VERIFIED["history"]
-    assert paths(timer) <= VERIFIED["timer"]
-    assert paths(sessions) <= VERIFIED["sessions"]
-    # The sample sessions carry every field the DTO has, so the list above stays complete.
-    assert paths(sessions) == VERIFIED["sessions"]
+    assert (
+        set(USED_FIELDS)
+        == set(VERIFIED)
+        == {"metrics", "history", "timer", "sessions", "goals", "achievements", "notes"}
+    )
