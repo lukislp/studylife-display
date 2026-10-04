@@ -18,7 +18,12 @@ import httpx
 from PIL import Image
 
 from studylife_display import package_version
-from studylife_display.config import MIN_TOKEN_LENGTH, Settings, parse_layout_list
+from studylife_display.config import (
+    LEGACY_LAYOUT_KEYS,
+    MIN_TOKEN_LENGTH,
+    Settings,
+    parse_layout_list,
+)
 from studylife_display.connect import local_hostname, setup_connect_url
 from studylife_display.credentials import ENV_FILE, apply_pending_credentials
 from studylife_display.current_frame import (
@@ -637,7 +642,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     preview.add_argument(
         "--layout",
-        choices=sorted(valid_choices()),
+        # The current keys plus the legacy aliases (`semester` for `degree`), so a script
+        # written against an earlier release keeps working; resolve_layout maps the alias.
+        choices=sorted(valid_choices() | set(LEGACY_LAYOUT_KEYS)),
         help="layout to render (default: the persisted choice, else DISPLAY_LAYOUT)",
     )
 

@@ -1,4 +1,4 @@
-"""The chart layouts (year, balance, achievements) and the panes of semester and courses."""
+"""The chart layouts (year, balance, achievements) and the panes of degree and courses."""
 
 from dataclasses import replace
 from datetime import datetime
@@ -230,10 +230,10 @@ class TestPanes:
     @pytest.mark.parametrize(
         "pair",
         [
-            ("year", "semester"),
+            ("year", "degree"),
             ("balance", "courses"),
             ("achievements", "year"),
-            ("semester", "balance"),
+            ("degree", "balance"),
             ("courses", "achievements"),
         ],
     )
@@ -265,5 +265,5 @@ class TestPanes:
             achievements=Achievements(0, 0, ()),
             year=YearData((), data.year.first_monday, 0.0, 0, 0),
         )
-        for pair in (("year", "semester"), ("balance", "courses"), ("achievements", "balance")):
+        for pair in (("year", "degree"), ("balance", "courses"), ("achievements", "balance")):
             assert_full_frame(render_pair(bare, "en", pair))

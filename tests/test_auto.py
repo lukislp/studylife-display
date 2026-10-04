@@ -186,6 +186,12 @@ class TestRulesFromSettings:
         assert rules_from_settings(settings) == AutoRules("sat 20-23", "")
 
 
+class TestLegacyAlias:
+    def test_semester_resolves_to_degree(self, data: DashboardData) -> None:
+        assert resolve_layout("semester", data) == "degree"
+        assert resolve_layout("degree", data) == "degree"
+
+
 class TestConcreteKeys:
     @pytest.mark.parametrize("key", sorted(LAYOUTS))
     def test_a_concrete_key_returns_itself(self, data: DashboardData, key: str) -> None:

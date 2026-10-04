@@ -41,7 +41,7 @@ empty = no session, light hatch = under 1 h, dense hatch = under 2.5 h, solid = 
 | `focus` | The running timer as the hero: remaining time of the phase (`MM:SS`, a snapshot as of the refresh, not a live tick), "Fokus"/"Pause" and the round; without a timer, today's hours and "kein Timer aktiv". One line with streak and next exam underneath | ![focus](docs/preview-focus.png) |
 | `exam` | The countdown as the hero: inverted "in N Tagen" block, course and date; below it hours per course over the last 28 days (top 5, from the session history) and a streak/today line | ![exam](docs/preview-exam.png) |
 | `week` | The week target as a large bar with hours, target range and percent; the 4-week heatmap large with weekday initials and per-week sums; today's hours and streak at the bottom | ![week](docs/preview-week.png) |
-| `semester` | ECTS earned of total as a big number with a progress bar, the average grade (or "noch keine Note"), the expected graduation date ("nicht verfügbar" / "abgeschlossen"), the course that has gone longest without a session (or "alle Kurse aktiv"), topics completed of total, and the programme name. Never picked by `auto`; all of it from `metrics/summary` (`ects`, `averageGrade`, `forecast`, `neglectedCourse`, `topics`) | ![semester](docs/preview-semester.png) |
+| `degree` | ECTS earned of total as a big number with a progress bar, the average grade (or "noch keine Note"), the expected graduation date ("nicht verfügbar" / "abgeschlossen"), the course that has gone longest without a session (or "alle Kurse aktiv"), topics completed of total, and the programme name. Never picked by `auto`; all of it from `metrics/summary` (`ects`, `averageGrade`, `forecast`, `neglectedCourse`, `topics`) | ![degree](docs/preview-degree.png) |
 | `agenda` | Today's plan: the sessions planned for today from `GET /api/sessions` (up to six rows of `HH:MM–HH:MM`, course and topic; completed ones ticked, the running or next one inverted like the exam countdown, "+N weitere" when there are more, "keine Sessions geplant" when there are none), with today's hours, the streak and the next exam in a column on the right and the timer (or the week target) at the bottom. Empty when the key lacks the `Sessions.GetAll` scope | ![agenda](docs/preview-agenda.png) |
 | `review` | The weekly review: this week's hours large with the change against the week before (sign and an up/down marker), the course studied most, the session count and the streak on the right, the seven days Monday to Sunday as small bars, and StudyLife's own `weeklyReport` of the previous week in the footer. The hero figures are summed on the Pi from the session history for the current week, because the server's report always describes the last *completed* week | ![review](docs/preview-review.png) |
 | `courses` | Hours per course over the last 28 days as the whole frame - the same bar chart `exam` fits under its countdown block, given the full canvas and up to 9 rows, with the summed total as a small hero line up top. Never picked by `auto` | ![courses](docs/preview-courses.png) |
@@ -85,6 +85,9 @@ The four windows use the quiet-hours notation with an optional list of weekdays 
 (`sun`, `sat,sun`, `mon-fri`; `24` is allowed as the end, a window may not wrap past
 midnight) and can be changed on the settings page; an empty window switches that rule off.
 Every other layout is never chosen automatically: they are views to switch to on purpose.
+
+`degree` was called `semester` until 1.11; that key is still accepted as an alias in `DISPLAY_LAYOUT`,
+`DISPLAY_DUO`, `settings.json`, the web interface, the JSON API and the CLI, and is stored under its new name.
 
 `auto` is the only choice that is not a layout: either it picks the layout, or the user
 picks one by hand. Whichever it is, only the content changes - the panel's orientation is
@@ -366,7 +369,7 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 | `DISPLAY_CLEAR_AT` | `04:00` | Time of the daily full clear against ghosting; empty = off (*web*) |
 | `DISPLAY_UPDATE_CHECK` | `false` | Let the web interface ask GitHub (once per 6 h) whether a newer release exists (*web*) |
 | `DISPLAY_AUTO_UPDATE` | `false` | Let `studylife-display-update.timer` install a newer release once a day, unattended; see [Updating](#updating) |
-| `DISPLAY_LAYOUT` | `auto` | `auto` or any layout key from [Layouts](#layouts) (`classic`, `focus`, `exam`, `week`, `semester`, `agenda`, `review`, `courses`, `milestone`, `month`, `exams`, `year`, `balance`, `timer`, `tomorrow`, `today`, `goals`, `achievements`, `note`, `quiet`, `duo`); overridden by the choice made in the web interface |
+| `DISPLAY_LAYOUT` | `auto` | `auto` or any layout key from [Layouts](#layouts) (`classic`, `focus`, `exam`, `week`, `degree`, `agenda`, `review`, `courses`, `milestone`, `month`, `exams`, `year`, `balance`, `timer`, `tomorrow`, `today`, `goals`, `achievements`, `note`, `quiet`, `duo`); overridden by the choice made in the web interface |
 | `DISPLAY_AUTO_REVIEW` | `sun 18-24` | Window of the `review` rule in `auto`: `[weekdays] HH-HH` or `HH:MM-HH:MM` (`24` = midnight, no wrap past midnight); empty = rule off (*web*) |
 | `DISPLAY_AUTO_AGENDA` | `06-12` | Window of the `agenda` rule in `auto`, same notation; empty = rule off (*web*) |
 | `DISPLAY_AUTO_TOMORROW` | `18-23` | Window of the `tomorrow` rule in `auto`, same notation; empty = rule off (*web*) |
@@ -561,7 +564,7 @@ before showing it, the layouts (and their golden frames) stay upright.
 ```bash
 uv sync
 uv run studylife-display preview --sample --out frame.png   # no instance needed
-uv run studylife-display preview --sample --layout semester --out frame.png
+uv run studylife-display preview --sample --layout degree --out frame.png
 uv run studylife-display preview --out frame.png            # against your instance (.env)
 STUDYLIFE_API_KEY= DISPLAY_SETUP_URL=http://pi.local:8795/connect \
   uv run studylife-display preview --out setup.png          # the setup screen, no API call

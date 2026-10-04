@@ -1,7 +1,10 @@
-"""The semester as the hero: ECTS earned of total as a big number with a progress bar,
+"""The degree as the hero: ECTS earned of total as a big number with a progress bar,
 the average grade and the graduation forecast on the right, the course that has gone
 longest without a session and the topic progress underneath, and the programme name with
-today's hours at the bottom. Never picked by "auto": it is a view to switch to on purpose."""
+today's hours at the bottom. The whole degree, not a semester: every figure comes from
+`metrics/summary` and spans the programme. Never picked by "auto": it is a view to switch
+to on purpose. (Known as `semester` until 1.11; that key stays an alias, see
+config.LEGACY_LAYOUT_KEYS.)"""
 
 from __future__ import annotations
 

@@ -298,6 +298,24 @@ class TestLayoutChange:
         assert not settings_path(settings).exists()
 
 
+class TestLegacyAlias:
+    def test_posting_the_old_name_saves_the_new_one(
+        self, client: Client, cached: Path, settings: Settings
+    ) -> None:
+        status, body = client.json("POST", "/api/layout", {"layout": "semester"})
+        assert status == 200 and body["outcome"] == "refreshed"
+        assert json.loads(settings_path(settings).read_text(encoding="utf-8")) == {
+            "layout": "degree"
+        }
+
+    def test_options_list_only_the_new_name_but_both_previews_work(self, client: Client) -> None:
+        _, layouts = client.json("GET", "/api/layouts")
+        keys = {option["key"] for option in layouts["options"]}
+        assert "degree" in keys and "semester" not in keys
+        for key in ("degree", "semester"):
+            assert client.request("GET", f"/api/preview/{key}.png")[0] == 200
+
+
 class TestImages:
     def test_current_png_is_a_404_before_the_first_refresh(self, client: Client) -> None:
         assert client.request("GET", "/api/current.png")[0] == 404

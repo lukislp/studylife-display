@@ -314,6 +314,18 @@ def test_check_prints_what_it_got(
     assert not env["frame"].exists()
 
 
+def test_preview_accepts_the_old_layout_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("STUDYLIFE_BASE_URL", raising=False)
+    monkeypatch.delenv("STUDYLIFE_API_KEY", raising=False)
+    old, new = tmp_path / "old.png", tmp_path / "new.png"
+    assert main(["preview", "--sample", "--layout", "semester", "--out", str(old)]) == 0
+    assert main(["preview", "--sample", "--layout", "degree", "--out", str(new)]) == 0
+    with Image.open(old) as a, Image.open(new) as b:
+        assert ImageChops.difference(a.convert("L"), b.convert("L")).getbbox() is None
+
+
 def test_preview_with_sample_data_needs_no_instance(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

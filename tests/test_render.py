@@ -11,10 +11,10 @@ from studylife_display.layouts import LAYOUTS
 from studylife_display.layouts.agenda import MAX_ROWS, MORE_BASELINE, row_box
 from studylife_display.layouts.classic import HEATMAP_BOX
 from studylife_display.layouts.common import format_minutes_seconds
+from studylife_display.layouts.degree import ECTS_BAR_BOX
 from studylife_display.layouts.exam import HERO_BOX
 from studylife_display.layouts.focus import remaining_seconds
 from studylife_display.layouts.review import STRIP_BOX, format_delta, format_week
-from studylife_display.layouts.semester import ECTS_BAR_BOX
 from studylife_display.layouts.week import QUOTA_BAR_BOX
 from studylife_display.model import (
     AgendaItem,
@@ -164,8 +164,8 @@ class TestLayouts:
         # Only the target ticks cross the empty part.
         assert black_fraction(image, empty) < 0.05
 
-    def test_semester_ects_bar_is_filled_to_the_earned_fraction(self, data: DashboardData) -> None:
-        image = render(data, "de", "semester")
+    def test_degree_ects_bar_is_filled_to_the_earned_fraction(self, data: DashboardData) -> None:
+        image = render(data, "de", "degree")
         left, top, right, bottom = ECTS_BAR_BOX
         fraction = data.ects.earned / data.ects.total
         filled = (left + 4, top + 4, left + int((right - left) * fraction) - 8, bottom - 4)
@@ -173,19 +173,19 @@ class TestLayouts:
         assert black_fraction(image, filled) > 0.95
         assert black_fraction(image, empty) == 0.0
 
-    def test_semester_placeholders_when_the_figures_are_missing(self, data: DashboardData) -> None:
-        full = render(data, "de", "semester")
+    def test_degree_placeholders_when_the_figures_are_missing(self, data: DashboardData) -> None:
+        full = render(data, "de", "degree")
         bare = replace(
             data,
             average_grade=None,
             forecast=Forecast(False, False, None, 0.0),
             neglected_course=None,
         )
-        image = render(bare, "de", "semester")
+        image = render(bare, "de", "degree")
         assert image.size == (WIDTH, HEIGHT)
         assert differing_fraction(full, image) > 0.0
         done = replace(data, forecast=Forecast(True, True, None, 0.0))
-        assert differing_fraction(render(done, "de", "semester"), image) > 0.0
+        assert differing_fraction(render(done, "de", "degree"), image) > 0.0
 
     def test_exam_lists_the_courses_with_the_most_hours_first(self, data: DashboardData) -> None:
         names = [name for name, _ in data.course_hours]
@@ -283,7 +283,7 @@ class TestGoldens:
             ("focus", "de"),
             ("exam", "de"),
             ("week", "de"),
-            ("semester", "de"),
+            ("degree", "de"),
             ("agenda", "de"),
             ("review", "de"),
             ("courses", "de"),

@@ -209,7 +209,7 @@ def _draw_rows(
 
 
 def neglected_line(data: DashboardData, ct: dict[str, str]) -> str:
-    """The semester layout's wording for the course that has gone longest without a session."""
+    """The degree layout's wording for the course that has gone longest without a session."""
     course = data.neglected_course
     if course is None:
         return ct["neglected_none"]
