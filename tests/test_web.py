@@ -517,6 +517,9 @@ class TestHealth:
         assert report["status"] == "ok"
         assert report["last_fetch_ok"] is True
         assert report["last_fetch_at"] == now.isoformat()
+        assert re.fullmatch(r"[0-9a-f]{16}", report["id"])
+        _, _, again = client.request("GET", "/healthz")
+        assert json.loads(again)["id"] == report["id"]
         assert report["last_panel_update_at"] == now.isoformat()
         assert report["stale_minutes"] == 0
         assert report["layout"] in {"classic", "focus", "exam", "week", "agenda"}

@@ -14,6 +14,7 @@ from typing import Any
 
 from studylife_display import package_version
 from studylife_display.config import Settings
+from studylife_display.instance import instance_id
 from studylife_display.layouts.auto import resolve_layout, rules_from_settings
 from studylife_display.model import build_dashboard
 from studylife_display.quiet_hours import in_quiet_hours
@@ -81,6 +82,7 @@ def health_report(settings: Settings, now: datetime) -> tuple[dict[str, Any], HT
         "status": state,
         "setup": setup,
         "version": package_version(),
+        "id": instance_id(state_path.parent),
         "last_fetch_at": None if last_fetch_at is None else last_fetch_at.isoformat(),
         "last_fetch_ok": status.last_fetch_ok,
         "stale_minutes": stale_minutes,
