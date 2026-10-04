@@ -51,11 +51,13 @@ from studylife_display import api as api_module
 from studylife_display import package_version
 from studylife_display.config import (
     LANGUAGES,
+    OVERRIDE_FIELDS,
     READONLY_FIELDS,
     ROTATIONS,
     Settings,
     WebOverrides,
     parse_bind,
+    parse_layout_list,
 )
 from studylife_display.connect import (
     CLIENT_ID,
@@ -79,17 +81,18 @@ from studylife_display.current_frame import (
     read_current_png,
 )
 from studylife_display.health import health_report
-from studylife_display.layouts import AUTO, LAYOUTS
+from studylife_display.layouts import AUTO, CYCLE, DUO, LAYOUTS, PSEUDO_CHOICES
 from studylife_display.layouts.auto import (
     EXAM_SOON_DAYS,
     resolve_layout,
     rules_from_settings,
 )
 from studylife_display.layouts.common import TEXT
+from studylife_display.layouts.panes import PANES
 from studylife_display.model import DashboardData, build_dashboard
 from studylife_display.quiet_hours import quiet_hours_end
 from studylife_display.render import render
-from studylife_display.sample import sample_payloads
+from studylife_display.sample import sample_extras, sample_payloads
 from studylife_display.settings_store import (
     effective_settings,
     is_valid_choice,
@@ -113,6 +116,11 @@ MAX_BODY_BYTES = 64 * 1024
 README_URL = "https://github.com/lukislp/studylife-display#readme"
 README_OVERLAY_URL = "https://github.com/lukislp/studylife-display#sd-card-protection"
 TIMER_UNIT = "studylife-display.timer"
+# The auto-rule windows the settings page edits, in display order (settings.json keys).
+AUTO_WINDOW_KEYS = ("auto_review", "auto_agenda", "auto_tomorrow", "auto_quiet")
+# Everything "reset to the environment values" removes from settings.json: every override
+# but the layout choice itself (the cycle order and the duo pair go with it).
+RESETTABLE_KEYS = tuple(key for key in OVERRIDE_FIELDS if key != "layout")
 
 WEB_TEXT: dict[str, dict[str, str]] = {
     "de": {
@@ -134,11 +142,24 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "auto_description": "Wählt bei jeder Aktualisierung das passende Layout.",
         "auto_rules": (
             "Automatisch heißt, in dieser Reihenfolge: Wochenrückblick im Fenster {review}; "
-            "Prüfung, wenn die nächste Prüfung in höchstens {days} Tagen ansteht; Fokus, solange "
-            "ein Timer läuft; Tagesplan, solange heute noch eine Session bevorsteht, im Fenster "
-            "{agenda}; sonst Klassisch. Semester wird nie automatisch gewählt."
+            "Serien-Meilenstein an einem runden Tag; Prüfung, wenn die nächste Prüfung in "
+            "höchstens {days} Tagen ansteht; Fokus, solange ein Timer läuft; Nacht im Fenster "
+            "{quiet}; Tagesplan, solange heute noch eine Session bevorsteht, im Fenster {agenda}; "
+            "Morgen, solange morgen Sessions geplant sind, im Fenster {tomorrow}; sonst "
+            "Klassisch. Alle anderen Layouts werden nie automatisch gewählt."
         ),
         "auto_off": "aus",
+        "options_heading": "Wechsel und Duo",
+        "cycle_label": "Reihenfolge für „Wechsel“",
+        "cycle_hint": (
+            "Layout-Schlüssel durch Komma getrennt, in dieser Reihenfolge; bei jeder "
+            "Aktualisierung kommt das nächste. Möglich: {keys}"
+        ),
+        "cycle_invalid": "Ungültige Wechsel-Liste: {message}",
+        "duo_label": "Duo: zwei Layouts nebeneinander",
+        "duo_left": "links",
+        "duo_right": "rechts",
+        "duo_invalid": "Ungültiges Duo-Paar: {message}",
         "sessions_failed": (
             "Die Sessions für den Tagesplan konnten nicht geladen werden ({message}). Ein vor "
             "dem Scope Sessions.GetAll ausgestellter Schlüssel muss neu ausgestellt werden; "
@@ -249,6 +270,16 @@ WEB_TEXT: dict[str, dict[str, str]] = {
             "HH-HH oder HH:MM-HH:MM, z. B. „06-12“, optional mit Wochentagen davor; leer = "
             "Regel aus."
         ),
+        "settings_auto_tomorrow": "Automatik: Morgen im Fenster",
+        "settings_auto_tomorrow_hint": (
+            "Abends der Plan für morgen, solange morgen Sessions geplant sind, z. B. „18-23“; "
+            "leer = Regel aus."
+        ),
+        "settings_auto_quiet": "Automatik: Nacht im Fenster",
+        "settings_auto_quiet_hint": (
+            "Das Minimalbild für die Nacht, z. B. „22-23“ als die Stunde vor der Ruhezeit, "
+            "damit das Bild, das über Nacht bleibt, das ruhige ist; leer = Regel aus."
+        ),
         "settings_update_check": "Auf neue Version prüfen (fragt GitHub, alle 6 h)",
         "settings_source_file": "aus settings.json",
         "settings_source_env": "aus Umgebung/Standard",
@@ -287,12 +318,25 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "auto_name": "Automatic",
         "auto_description": "Picks the fitting layout on every refresh.",
         "auto_rules": (
-            "Automatic means, in this order: weekly review inside the window {review}; exam "
-            "when the next exam is at most {days} days away; focus while a timer runs; agenda "
-            "while a session planned for today still lies ahead, inside the window {agenda}; "
-            "otherwise classic. Semester is never picked automatically."
+            "Automatic means, in this order: weekly review inside the window {review}; streak "
+            "milestone on a round-number day; exam when the next exam is at most {days} days "
+            "away; focus while a timer runs; night inside the window {quiet}; agenda while a "
+            "session planned for today still lies ahead, inside the window {agenda}; tomorrow "
+            "while tomorrow has sessions planned, inside the window {tomorrow}; otherwise "
+            "classic. Every other layout is never picked automatically."
         ),
         "auto_off": "off",
+        "options_heading": "Cycle and duo",
+        "cycle_label": "Order for “Cycle”",
+        "cycle_hint": (
+            "Layout keys separated by commas, in this order; every refresh shows the next one. "
+            "Available: {keys}"
+        ),
+        "cycle_invalid": "Invalid cycle list: {message}",
+        "duo_label": "Duo: two layouts side by side",
+        "duo_left": "left",
+        "duo_right": "right",
+        "duo_invalid": "Invalid duo pair: {message}",
         "sessions_failed": (
             "The sessions for the agenda could not be fetched ({message}). A key issued before "
             "the Sessions.GetAll scope existed has to be re-issued; the other layouts are not "
@@ -391,6 +435,16 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "settings_auto_agenda_hint": (
             "HH-HH or HH:MM-HH:MM, e.g. “06-12”, optionally with weekdays in front; empty = "
             "rule off."
+        ),
+        "settings_auto_tomorrow": "Auto: tomorrow inside the window",
+        "settings_auto_tomorrow_hint": (
+            "Tomorrow's plan in the evening, while tomorrow has sessions planned, e.g. “18-23”; "
+            "empty = rule off."
+        ),
+        "settings_auto_quiet": "Auto: night inside the window",
+        "settings_auto_quiet_hint": (
+            "The minimal night frame, e.g. “22-23” as the hour before the quiet hours, so the "
+            "frame that stays up all night is the calm one; empty = rule off."
         ),
         "settings_update_check": "Check for a newer release (asks GitHub every 6 h)",
         "settings_source_file": "from settings.json",
@@ -538,6 +592,21 @@ class WebApp:
     def now(self) -> datetime:
         return datetime.now(zone(self.settings.studylife_timezone))
 
+    def previous_layout(self) -> str | None:
+        """The layout on the panel right now, which the cycle choice steps on from."""
+        frame = self.current_frame()
+        return frame.layout if frame is not None and frame.kind == DASHBOARD else None
+
+    def duo_pair(self) -> tuple[str, str]:
+        left, right = parse_layout_list(self.effective().display_duo, "DISPLAY_DUO")
+        return left, right
+
+    def resolve(self, choice: str, data: DashboardData) -> str:
+        """`choice` as it would be drawn right now (the pseudo choices resolved)."""
+        return resolve_layout(
+            choice, data, rules_from_settings(self.effective()), self.previous_layout()
+        )
+
     # -- authentication -----------------------------------------------------------------
 
     def token_matches(self, candidate: str) -> bool:
@@ -569,7 +638,19 @@ class WebApp:
         snapshot = load_snapshot(Path(self.settings.display_state_path), tz)
         if snapshot is None:
             metrics, history, timer, sessions = sample_payloads(now, tz)
-            return build_dashboard(metrics, history, timer, now, tz, sessions=sessions), True
+            goals, achievements, notes = sample_extras(now, tz)
+            data = build_dashboard(
+                metrics,
+                history,
+                timer,
+                now,
+                tz,
+                sessions=sessions,
+                goals=goals,
+                achievements_payload=achievements,
+                notes_payload=notes,
+            )
+            return data, True
         data = build_dashboard(
             snapshot.metrics,
             snapshot.history,
@@ -578,13 +659,15 @@ class WebApp:
             tz,
             snapshot.fetched_at,
             sessions=snapshot.sessions,
+            goals=snapshot.goals,
+            achievements_payload=snapshot.achievements,
+            notes_payload=snapshot.notes,
         )
         return data, False
 
     def preview_png(self, key: str) -> bytes:
         data, _ = self.current_data()
-        layout = resolve_layout(key, data, rules_from_settings(self.effective()))
-        image = render(data, self.language, layout)
+        image = render(data, self.language, self.resolve(key, data), self.duo_pair())
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
         return buffer.getvalue()
@@ -721,9 +804,9 @@ class WebApp:
             "quiet_hours": form.get("quiet_hours", ""),
             "clear_at": form.get("clear_at", ""),
             "update_check": form.get("update_check") == "on",
-            "auto_review": form.get("auto_review", ""),
-            "auto_agenda": form.get("auto_agenda", ""),
         }
+        for key in AUTO_WINDOW_KEYS:
+            values[key] = form.get(key, "")
         errors: dict[str, str] = {}
         rotate_raw = form.get("rotate", "").strip()
         try:
@@ -772,7 +855,8 @@ class WebApp:
         language = self.language
         data, is_sample = self.current_data()
         choice = load_layout_choice(settings)
-        resolved = resolve_layout(AUTO, data, rules_from_settings(settings))
+        resolved = self.resolve(AUTO, data)
+        next_in_cycle = self.resolve(CYCLE, data)
         parts = [f"<h1>{html.escape(t['title'])} · {html.escape(t['layouts_heading'])}</h1>"]
         parts.append(self._nav("/"))
         if flash in FLASH_KEYS:
@@ -802,14 +886,23 @@ class WebApp:
             parts.append(f"<p class='warn'>{html.escape(note)}</p>")
 
         parts.append("<form method='post' action='/layout'><div class='grid'>")
+        auto_spec = PSEUDO_CHOICES[AUTO]
+        cycle_spec = PSEUDO_CHOICES[CYCLE]
         cards: list[tuple[str, str, str]] = [
             (
                 AUTO,
-                t["auto_name"]
+                auto_spec.name[language]
                 + " · "
                 + t["auto_now"].format(layout=LAYOUTS[resolved].name[language]),
-                t["auto_description"],
-            )
+                auto_spec.description[language],
+            ),
+            (
+                CYCLE,
+                cycle_spec.name[language]
+                + " · "
+                + t["auto_now"].format(layout=LAYOUTS[next_in_cycle].name[language]),
+                cycle_spec.description[language],
+            ),
         ]
         cards += [
             (spec.key, spec.name[language], spec.description[language]) for spec in LAYOUTS.values()
@@ -824,7 +917,9 @@ class WebApp:
                 f"alt='{html.escape(name)}'>"
                 "</label>"
             )
-        parts.append("</div><div class='actions'>")
+        parts.append("</div>")
+        parts.append(self._layout_options_block(settings, language))
+        parts.append("<div class='actions'>")
         parts.append(f"<button class='primary' type='submit'>{html.escape(t['apply'])}</button>")
         parts.append("</div></form>")
         parts.append(
@@ -835,11 +930,38 @@ class WebApp:
             days=EXAM_SOON_DAYS,
             review=settings.display_auto_review or t["auto_off"],
             agenda=settings.display_auto_agenda or t["auto_off"],
+            tomorrow=settings.display_auto_tomorrow or t["auto_off"],
+            quiet=settings.display_auto_quiet or t["auto_off"],
         )
         parts.append(f"<p class='note'>{html.escape(rules)}</p>")
         parts.append(f"<p class='note'>{html.escape(t['full_refresh_note'])}</p>")
         parts.append(f"<footer>{html.escape(self.footer_line(state_dir, now))}</footer>")
         return _page(t["title"], "".join(parts))
+
+    def _layout_options_block(self, settings: Settings, language: str) -> str:
+        """The cycle order (a text field, since the order matters) and the duo pair (two
+        selects) under the layout cards; posted together with the layout choice."""
+        t = self.text
+        keys = ", ".join(key for key in LAYOUTS if key != DUO)
+        parts = [f"<h2>{html.escape(t['options_heading'])}</h2><div class='field'>"]
+        parts.append(
+            f"<label for='cycle'>{html.escape(t['cycle_label'])}</label>"
+            f"<input id='cycle' name='cycle' type='text' "
+            f"value='{html.escape(settings.display_cycle, quote=True)}'>"
+            f"<small>{html.escape(t['cycle_hint'].format(keys=keys))}</small>"
+        )
+        left, right = self.duo_pair()
+        parts.append(f"<label>{html.escape(t['duo_label'])}</label><div class='duo'>")
+        for side, current in (("duo_left", left), ("duo_right", right)):
+            parts.append(f"<label for='{side}'>{html.escape(t[side])}</label>")
+            parts.append(f"<select id='{side}' name='{side}'>")
+            for key in PANES:
+                selected = " selected" if key == current else ""
+                name = LAYOUTS[key].name[language]
+                parts.append(f"<option value='{key}'{selected}>{html.escape(name)}</option>")
+            parts.append("</select>")
+        parts.append("</div></div>")
+        return "".join(parts)
 
     def connect_page(self, flash: str | None = None) -> bytes:
         t = self.text
@@ -920,6 +1042,8 @@ class WebApp:
             "update_check": settings.display_update_check,
             "auto_review": settings.display_auto_review,
             "auto_agenda": settings.display_auto_agenda,
+            "auto_tomorrow": settings.display_auto_tomorrow,
+            "auto_quiet": settings.display_auto_quiet,
         }
         if submitted:
             values.update(submitted)
@@ -976,7 +1100,7 @@ class WebApp:
             f"value='{html.escape(str(values['clear_at']), quote=True)}'>"
             f"{error('clear_at')}<small>{html.escape(t['settings_clear_at_hint'])}</small>"
         )
-        for key in ("auto_review", "auto_agenda"):
+        for key in AUTO_WINDOW_KEYS:
             parts.append(
                 f"<label for='{key}'>{html.escape(t['settings_' + key])}{source(key)}</label>"
                 f"<input id='{key}' name='{key}' type='text' "
@@ -1249,8 +1373,26 @@ class RequestHandler(BaseHTTPRequestHandler):
             if not is_valid_choice(choice):
                 self._send(HTTPStatus.BAD_REQUEST, app.simple_page(app.text["bad_request"]))
                 return
+            # The cycle order and the duo pair travel in the same form; an invalid value is
+            # a 400 before anything is written, like an invalid layout.
+            options: dict[str, str] = {}
+            if "cycle" in form:
+                options["cycle"] = form["cycle"]
+            if "duo_left" in form or "duo_right" in form:
+                options["duo"] = f"{form.get('duo_left', '')},{form.get('duo_right', '')}"
+            try:
+                WebOverrides.model_validate(options)
+            except ValidationError as exc:
+                message = exc.errors()[0]["msg"].removeprefix("Value error, ")
+                self._send(
+                    HTTPStatus.BAD_REQUEST,
+                    app.simple_page(f"{app.text['bad_request']} {message}"),
+                )
+                return
+            if options:
+                update_overrides(app.settings, **options)
             save_layout_choice(app.settings, choice)
-            log.info("layout choice set to %s", choice)
+            log.info("layout choice set to %s (%s)", choice, options)
             outcome = self._run_refresh()
             self._redirect("/?m=" + ("saved" if outcome == "refreshed" else outcome))
             return
@@ -1265,16 +1407,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._redirect("/connect?m=" + app.finish_connect(form.get("callback_url", "")))
             return
         if parts.path == "/settings/reset":
-            update_overrides(
-                app.settings,
-                language=None,
-                rotate=None,
-                quiet_hours=None,
-                clear_at=None,
-                update_check=None,
-                auto_review=None,
-                auto_agenda=None,
-            )
+            update_overrides(app.settings, **{key: None for key in RESETTABLE_KEYS})
             log.info("web settings reset to the environment values")
             self._redirect("/settings?m=reset")
             return
