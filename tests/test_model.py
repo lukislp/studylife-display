@@ -251,3 +251,93 @@ class TestTimes:
         history = [session("2026-03-29T01:30:00", "2026-03-29T03:30:00")]
         now = datetime(2026, 3, 29, 12, 0, tzinfo=tz)
         assert build_dashboard({}, history, {}, now, tz).today_hours == 1.0
+
+
+class TestLastSession:
+    def test_the_latest_end_not_after_now_wins(self, tz: ZoneInfo, fixed_now: datetime) -> None:
+        history = [
+            {**session("2026-09-17T09:00:00", "2026-09-17T10:15:00"), "topic": "Kapitel 1"},
+            {**session("2026-09-17T14:00:00", "2026-09-17T16:30:00"), "topic": "Kapitel 2"},
+            session("2026-09-17T11:00:00", "2026-09-17T11:30:00"),
+            # Not over yet at 16:45.
+            session("2026-09-17T16:00:00", "2026-09-17T17:00:00"),
+        ]
+        last = build_dashboard({}, history, {}, fixed_now, tz).last_session
+        assert last is not None
+        assert last.end == datetime(2026, 9, 17, 16, 30, tzinfo=tz)
+        assert last.topic == "Kapitel 2"
+        assert last.course_name == "X"
+        assert last.minutes_ago == 15
+        assert last.hours == 2.5
+
+    def test_none_without_a_usable_session(self, tz: ZoneInfo, fixed_now: datetime) -> None:
+        history = [
+            {"startTime": "2026-09-17T16:00:00", "endTime": None},
+            session("2026-09-17T12:00:00", "2026-09-17T11:00:00"),
+        ]
+        assert build_dashboard({}, history, {}, fixed_now, tz).last_session is None
+        assert build_dashboard({}, [], {}, fixed_now, tz).last_session is None
+
+    def test_a_session_of_an_earlier_day_still_counts(
+        self, tz: ZoneInfo, fixed_now: datetime
+    ) -> None:
+        history = [session("2026-09-15T20:00:00", "2026-09-15T21:00:00")]
+        last = build_dashboard({}, history, {}, fixed_now, tz).last_session
+        assert last is not None
+        # Tuesday 21:00 -> Thursday 16:45.
+        assert last.minutes_ago == 43 * 60 + 45
+
+    def test_blank_course_and_topic(self, tz: ZoneInfo, fixed_now: datetime) -> None:
+        history = [{"startTime": "2026-09-17T15:00:00", "endTime": "2026-09-17T16:00:00"}]
+        last = build_dashboard({}, history, {}, fixed_now, tz).last_session
+        assert last is not None
+        assert last.course_name == ""
+        assert last.topic is None
+
+
+def planned(start: str, end: str, course: str = "Algebra", done: bool = False) -> dict[str, Any]:
+    return {
+        "courseName": course,
+        "startTime": start,
+        "endTime": end,
+        "topic": None,
+        "isCompleted": done,
+    }
+
+
+class TestWeekCalendar:
+    def test_monday_to_sunday_of_the_current_week_sorted(
+        self, tz: ZoneInfo, fixed_now: datetime
+    ) -> None:
+        sessions = [
+            planned("2026-09-20T23:00:00", "2026-09-20T23:30:00", "Sun"),  # Sunday, in
+            planned("2026-09-14T08:00:00", "2026-09-14T09:00:00", "Mon", done=True),  # Monday, in
+            planned("2026-09-13T20:00:00", "2026-09-13T21:00:00", "last Sunday"),  # out
+            planned("2026-09-21T08:00:00", "2026-09-21T09:00:00", "next Monday"),  # out
+            planned("2026-09-17T18:00:00", "2026-09-17T19:00:00", "Thu"),
+            planned("2026-09-17T09:00:00", "2026-09-17T08:00:00", "broken"),
+            {"courseName": "no times"},
+        ]
+        data = build_dashboard({}, [], {}, fixed_now, tz, sessions=sessions)
+        assert [item.course_name for item in data.week_calendar] == ["Mon", "Thu", "Sun"]
+        assert data.week_calendar[0].is_completed
+        assert not data.week_calendar[1].is_completed
+
+    def test_empty_without_sessions(self, tz: ZoneInfo, fixed_now: datetime) -> None:
+        assert build_dashboard({}, [], {}, fixed_now, tz).week_calendar == ()
+
+    def test_goal_days_inside_this_week_only(self, tz: ZoneInfo, fixed_now: datetime) -> None:
+        metrics = {
+            "upcomingCourseGoals": [
+                {
+                    "courseName": "Betriebssysteme",
+                    "daysLeft": 1,
+                    "targetDate": "2026-09-18T00:00:00",
+                },
+                {"courseName": "Algebra", "daysLeft": 3, "targetDate": "2026-09-20T00:00:00"},
+                {"courseName": "Datenbanken", "daysLeft": 4, "targetDate": "2026-09-21T00:00:00"},
+                {"courseName": "Undated", "daysLeft": 5},
+            ]
+        }
+        data = build_dashboard(metrics, [], {}, fixed_now, tz)
+        assert data.week_goal_days == ((4, "Betriebssysteme"), (6, "Algebra"))
