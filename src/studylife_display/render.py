@@ -45,7 +45,7 @@ def render(
     duo: tuple[str, str] | None = None,
 ) -> Image.Image:
     """Renders the dashboard as an 800x480 mode "1" image, black on white, in `layout`
-    (a key of LAYOUTS; "auto" and "cycle" must already be resolved by the caller). For the
+    (a key of LAYOUTS; "auto" must already be resolved by the caller). For the
     "duo" layout `duo` names the two halves (left, right); None draws the default pair."""
     spec = LAYOUTS.get(layout)
     if spec is None:

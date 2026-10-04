@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from studylife_display.config import OVERRIDE_FIELDS, READONLY_FIELDS, Settings
 from studylife_display.connect import CLIENT_ID, ConnectError, root_is_overlay, whoami
-from studylife_display.layouts import AUTO, CYCLE, LAYOUTS, PSEUDO_CHOICES
+from studylife_display.layouts import AUTO, LAYOUTS, PSEUDO_CHOICES
 from studylife_display.layouts.auto import resolve_layout, rules_from_settings
 from studylife_display.layouts.panes import PANES
 from studylife_display.settings_store import (
@@ -65,7 +65,6 @@ SETTINGS_KEYS = frozenset(
         "auto_agenda",
         "auto_tomorrow",
         "auto_quiet",
-        "cycle",
         "duo",
     }
 )
@@ -175,18 +174,14 @@ def _pseudo_options() -> list[dict[str, Any]]:
 
 
 def _layouts(app: WebApp) -> dict[str, Any]:
-    """The layout picker as data: the persisted choice, what "auto" and "cycle" would draw
-    right now, the cycle order and the duo pair as configured, the pseudo choices, the
-    layouts, and which layouts can be a duo half."""
+    """The layout picker as data: the persisted choice, what "auto" would draw right
+    now, the duo pair as configured, the pseudo choice, the layouts, and which layouts
+    can be a duo half."""
     settings = app.effective()
     data, _ = app.current_data()
-    rules = rules_from_settings(settings)
-    previous = app.previous_layout()
     return {
         "choice": load_layout_choice(settings),
-        "resolved": resolve_layout(AUTO, data, rules, previous),
-        "next_in_cycle": resolve_layout(CYCLE, data, rules, previous),
-        "cycle": list(rules.cycle),
+        "resolved": resolve_layout(AUTO, data, rules_from_settings(settings)),
         "duo": list(app.duo_pair()),
         "pseudo": _pseudo_options(),
         "options": _layout_options(),
@@ -216,7 +211,6 @@ def _settings_get(app: WebApp) -> dict[str, Any]:
         "auto_agenda": settings.display_auto_agenda,
         "auto_tomorrow": settings.display_auto_tomorrow,
         "auto_quiet": settings.display_auto_quiet,
-        "cycle": settings.display_cycle,
         "duo": settings.display_duo,
     }
     readonly = {
@@ -276,16 +270,14 @@ def handle(
         if not is_valid_choice(choice):
             return _error(HTTPStatus.BAD_REQUEST, "invalid_layout")
         assert isinstance(choice, str)  # narrows for mypy; is_valid_choice just checked it
-        # Optional in the same call: the cycle order and the duo pair, as a list of keys or
-        # the comma string; validated like the settings, nothing written when invalid.
+        # Optional in the same call: the duo pair, as a list of keys or the comma string;
+        # validated like the settings, nothing written when invalid.
         options: dict[str, str] = {}
-        for key in ("cycle", "duo"):
-            if key not in payload:
-                continue
-            value = _list_setting(payload[key])
+        if "duo" in payload:
+            value = _list_setting(payload["duo"])
             if value is None:
-                return _error(HTTPStatus.BAD_REQUEST, f"invalid_{key}")
-            options[key] = value
+                return _error(HTTPStatus.BAD_REQUEST, "invalid_duo")
+            options["duo"] = value
         if options:
             try:
                 update_overrides(app.settings, **options)
@@ -325,10 +317,9 @@ def handle(
         unknown = set(payload) - SETTINGS_KEYS
         if unknown:
             return _error(HTTPStatus.BAD_REQUEST, f"unknown field(s): {', '.join(sorted(unknown))}")
-        # The two list settings may also arrive as JSON lists.
-        for key in ("cycle", "duo"):
-            if isinstance(payload.get(key), list):
-                payload[key] = _list_setting(payload[key])
+        # The duo pair may also arrive as a JSON list.
+        if isinstance(payload.get("duo"), list):
+            payload["duo"] = _list_setting(payload["duo"])
         try:
             update_overrides(app.settings, **payload)
         except ValueError as exc:

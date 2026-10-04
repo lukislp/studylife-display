@@ -258,24 +258,22 @@ class TestActions:
         with Image.open(settings.display_output_path) as image:
             assert image.size == (800, 480)
 
-    def test_layout_post_saves_the_cycle_order_and_the_duo_pair(
+    def test_layout_post_saves_the_duo_pair(
         self, client: Client, cached: Path, settings: Settings
     ) -> None:
         client.login()
-        form = {"layout": "duo", "cycle": "today, year", "duo_left": "month", "duo_right": "week"}
+        form = {"layout": "duo", "duo_left": "month", "duo_right": "week"}
         status, headers, _ = client.request("POST", "/layout", form, headers=client.same_origin())
         assert status == 303
         assert headers["location"] == "/?m=saved"
         settings_file = cached.parent / "settings.json"
         assert json.loads(settings_file.read_text(encoding="utf-8")) == {
             "layout": "duo",
-            "cycle": "today,year",
             "duo": "month,week",
         }
         _, _, body = client.request("GET", "/")
         assert b"<option value='month' selected>" in body
         assert b"<option value='week' selected>" in body
-        assert b"value='today,year'" in body
 
     def test_invalid_duo_pair_is_a_400_and_nothing_is_written(
         self, client: Client, cached: Path
@@ -286,13 +284,13 @@ class TestActions:
         assert status == 400
         assert not (cached.parent / "settings.json").exists()
 
-    def test_the_layouts_page_lists_the_pseudo_choices_and_every_layout(
+    def test_the_layouts_page_lists_the_auto_choice_and_every_layout(
         self, client: Client, cached: Path
     ) -> None:
         client.login()
         _, _, body = client.request("GET", "/")
-        assert b"value='auto'" in body and b"value='cycle'" in body
-        assert b"Wechsel" in body
+        assert b"value='auto'" in body
+        assert b"Automatisch" in body
         for key in ("month", "year", "duo", "quiet", "note"):
             assert f"value='{key}'".encode() in body
         assert b"name='duo_left'" in body and b"name='duo_right'" in body

@@ -218,12 +218,10 @@ class TestLayouts:
         classic = next(o for o in body["options"] if o["key"] == "classic")
         assert set(classic["name"]) == {"de", "en"}
         assert set(classic["description"]) == {"de", "en"}
-        # The pseudo choices, the cycle order, the duo pair and which layouts can be a duo
-        # half travel alongside, so a client (studylife-hacs) can offer all of it.
-        assert [pseudo["key"] for pseudo in body["pseudo"]] == ["auto", "cycle"]
-        assert body["cycle"] == ["classic", "week", "agenda", "review"]
+        # The pseudo choice, the duo pair and which layouts can be a duo half travel
+        # alongside, so a client (studylife-hacs) can offer all of it.
+        assert [pseudo["key"] for pseudo in body["pseudo"]] == ["auto"]
         assert body["duo"] == ["focus", "agenda"]
-        assert body["next_in_cycle"] == "classic"
         assert set(body["panes"]) == set(LAYOUTS) - {"duo"}
 
     def test_resolved_follows_the_cached_data(self, client: Client, cached: Path) -> None:
@@ -269,40 +267,19 @@ class TestLayoutChange:
         assert status == 200
         assert body["outcome"] == "failed"
 
-    def test_duo_pair_and_cycle_order_travel_with_the_choice(
+    def test_duo_pair_travels_with_the_choice(
         self, client: Client, cached: Path, settings: Settings
     ) -> None:
         status, body = client.json(
-            "POST",
-            "/api/layout",
-            {"layout": "duo", "duo": ["year", "month"], "cycle": "today,week"},
+            "POST", "/api/layout", {"layout": "duo", "duo": ["year", "month"]}
         )
         assert status == 200
         assert body["outcome"] == "refreshed"
         saved = json.loads(settings_path(settings).read_text(encoding="utf-8"))
-        assert saved == {"layout": "duo", "duo": "year,month", "cycle": "today,week"}
+        assert saved == {"layout": "duo", "duo": "year,month"}
         _, layouts = client.json("GET", "/api/layouts")
         assert layouts["choice"] == "duo"
         assert layouts["duo"] == ["year", "month"]
-        assert layouts["cycle"] == ["today", "week"]
-        # The cycle choice steps on from the frame now on the panel (a duo frame is not in
-        # the list, so it restarts at the first entry).
-        assert layouts["next_in_cycle"] == "today"
-
-    def test_cycle_steps_on_from_the_shown_frame(
-        self, client: Client, settings: Settings, sample: Any, tz: ZoneInfo
-    ) -> None:
-        # A fresh cache, so the refresh draws a dashboard (not the stale screen) and
-        # current.json names a layout the next refresh can step on from.
-        fresh_cache(settings, sample, tz)
-        client.json("POST", "/api/layout", {"layout": "cycle", "cycle": ["week", "month"]})
-        _, state = client.json("GET", "/api/state")
-        assert state["current_frame"]["layout"] == "week"
-        _, layouts = client.json("GET", "/api/layouts")
-        assert layouts["next_in_cycle"] == "month"
-        client.json("POST", "/api/refresh")
-        _, state = client.json("GET", "/api/state")
-        assert state["current_frame"]["layout"] == "month"
 
     @pytest.mark.parametrize(
         "payload",
@@ -310,11 +287,9 @@ class TestLayoutChange:
             {"layout": "duo", "duo": ["year"]},
             {"layout": "duo", "duo": "year,holographic"},
             {"layout": "duo", "duo": 42},
-            {"layout": "cycle", "cycle": []},
-            {"layout": "cycle", "cycle": "auto,classic"},
         ],
     )
-    def test_invalid_pair_or_order_is_a_400_and_nothing_is_written(
+    def test_invalid_pair_is_a_400_and_nothing_is_written(
         self, client: Client, settings: Settings, payload: dict[str, Any]
     ) -> None:
         status, body = client.json("POST", "/api/layout", payload)
@@ -363,10 +338,8 @@ class TestSettings:
             "auto_agenda": False,
             "auto_tomorrow": False,
             "auto_quiet": False,
-            "cycle": False,
             "duo": False,
         }
-        assert body["values"]["cycle"] == "classic,week,agenda,review"
         assert body["values"]["duo"] == "focus,agenda"
         assert body["readonly"]["STUDYLIFE_API_KEY"] == {"set": True, "value": None}
         assert body["readonly"]["DISPLAY_API_TOKEN"] == {"set": True, "value": None}

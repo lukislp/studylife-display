@@ -6,9 +6,9 @@ A layout is a pure function `render(data, language) -> Image` (mode "1", 800x480
 interface, the JSON API and the README; `studylife_display.render.render` dispatches
 through LAYOUTS.
 
-Two choices are not layouts but rules that pick one per refresh (PSEUDO_CHOICES): "auto"
-(layouts/auto.py's rules) and "cycle" (the next one of a configured list). They have names
-and descriptions like the layouts so the pickers can list them, but nothing to render.
+One choice is not a layout but a rule that picks one per refresh (PSEUDO_CHOICES): "auto"
+(layouts/auto.py's rules). It has a name and a description like the layouts so the pickers
+can list it, but nothing to render. Otherwise the user picks a layout by hand.
 """
 
 from __future__ import annotations
@@ -46,7 +46,6 @@ from studylife_display.model import DashboardData
 Renderer = Callable[[DashboardData, str], Image.Image]
 
 AUTO = "auto"
-CYCLE = "cycle"
 DUO = "duo"
 
 
@@ -76,20 +75,6 @@ PSEUDO_CHOICES: dict[str, PseudoSpec] = {
             description={
                 "de": "Wählt bei jeder Aktualisierung das passende Layout.",
                 "en": "Picks the fitting layout on every refresh.",
-            },
-        ),
-        PseudoSpec(
-            key=CYCLE,
-            name={"de": "Wechsel", "en": "Cycle"},
-            description={
-                "de": (
-                    "Zeigt bei jeder Aktualisierung das nächste Layout aus der eingestellten "
-                    "Liste; der Inhalt wechselt, die Ausrichtung des Panels nie."
-                ),
-                "en": (
-                    "Shows the next layout of the configured list on every refresh; the "
-                    "content changes, the panel's orientation never does."
-                ),
             },
         ),
     )
@@ -409,7 +394,6 @@ LAYOUTS: dict[str, LayoutSpec] = {
 
 __all__ = [
     "AUTO",
-    "CYCLE",
     "DUO",
     "LAYOUTS",
     "PSEUDO_CHOICES",

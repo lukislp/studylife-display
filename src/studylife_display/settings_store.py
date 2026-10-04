@@ -34,6 +34,9 @@ from studylife_display.layouts import LAYOUTS, PSEUDO_CHOICES
 log = logging.getLogger(__name__)
 
 SETTINGS_FILE = "settings.json"
+# settings.json keys of earlier releases that no longer exist: "cycle" (1.11.0's layout
+# rotation, removed again). Ignored on read, and gone after the next write.
+LEGACY_KEYS = ("cycle",)
 
 
 class InvalidSettingsFile(ValueError):
@@ -41,7 +44,7 @@ class InvalidSettingsFile(ValueError):
 
 
 def valid_choices() -> frozenset[str]:
-    """Every layout key plus the pseudo choices ("auto", "cycle")."""
+    """Every layout key plus the pseudo choice "auto"."""
     return frozenset(LAYOUTS) | frozenset(PSEUDO_CHOICES)
 
 
@@ -73,6 +76,10 @@ def read_overrides(path: Path) -> WebOverrides | None:
         raise InvalidSettingsFile(f"{path} is not JSON ({exc})") from exc
     if not isinstance(raw, dict):
         raise InvalidSettingsFile(f"{path} is not a JSON object")
+    for key in LEGACY_KEYS:
+        # A key an earlier release wrote and this one no longer knows: dropped silently
+        # rather than failing the whole file (which would throw away every other choice).
+        raw.pop(key, None)
     try:
         return WebOverrides.model_validate(raw)
     except ValidationError as exc:
