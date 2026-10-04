@@ -27,10 +27,11 @@ from email.message import Message
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
-from studylife_display.config import READONLY_FIELDS, Settings
+from studylife_display.config import OVERRIDE_FIELDS, READONLY_FIELDS, Settings
 from studylife_display.connect import CLIENT_ID, ConnectError, root_is_overlay, whoami
-from studylife_display.layouts import AUTO, LAYOUTS
+from studylife_display.layouts import AUTO, CYCLE, LAYOUTS, PSEUDO_CHOICES
 from studylife_display.layouts.auto import resolve_layout, rules_from_settings
+from studylife_display.layouts.panes import PANES
 from studylife_display.settings_store import (
     is_valid_choice,
     load_layout_choice,
@@ -54,8 +55,22 @@ WRONG_TOKEN_DELAY_SECONDS = 1.0
 # "layout", which has its own endpoint (/api/layout) the same way the layouts page and the
 # settings page are separate on the web interface.
 SETTINGS_KEYS = frozenset(
-    {"language", "rotate", "quiet_hours", "clear_at", "update_check", "auto_review", "auto_agenda"}
+    {
+        "language",
+        "rotate",
+        "quiet_hours",
+        "clear_at",
+        "update_check",
+        "auto_review",
+        "auto_agenda",
+        "auto_tomorrow",
+        "auto_quiet",
+        "cycle",
+        "duo",
+    }
 )
+# What /api/settings/reset removes: every override but the layout choice (like the web page).
+RESETTABLE_KEYS = tuple(key for key in OVERRIDE_FIELDS if key != "layout")
 
 JsonResult = tuple[HTTPStatus, bytes, str]
 HealthReport = Callable[[Settings, datetime], tuple[dict[str, Any], HTTPStatus]]
@@ -152,14 +167,41 @@ def _state(app: WebApp, health_report: HealthReport) -> tuple[dict[str, Any], HT
     return payload, status
 
 
+def _pseudo_options() -> list[dict[str, Any]]:
+    return [
+        {"key": spec.key, "name": spec.name, "description": spec.description}
+        for spec in PSEUDO_CHOICES.values()
+    ]
+
+
 def _layouts(app: WebApp) -> dict[str, Any]:
+    """The layout picker as data: the persisted choice, what "auto" and "cycle" would draw
+    right now, the cycle order and the duo pair as configured, the pseudo choices, the
+    layouts, and which layouts can be a duo half."""
     settings = app.effective()
     data, _ = app.current_data()
+    rules = rules_from_settings(settings)
+    previous = app.previous_layout()
     return {
         "choice": load_layout_choice(settings),
-        "resolved": resolve_layout(AUTO, data, rules_from_settings(settings)),
+        "resolved": resolve_layout(AUTO, data, rules, previous),
+        "next_in_cycle": resolve_layout(CYCLE, data, rules, previous),
+        "cycle": list(rules.cycle),
+        "duo": list(app.duo_pair()),
+        "pseudo": _pseudo_options(),
         "options": _layout_options(),
+        "panes": list(PANES),
     }
+
+
+def _list_setting(value: object) -> str | None:
+    """`["classic", "week"]` or `"classic,week"` -> the comma string settings.json holds;
+    None for anything that is neither."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return ",".join(value)
+    return None
 
 
 def _settings_get(app: WebApp) -> dict[str, Any]:
@@ -172,6 +214,10 @@ def _settings_get(app: WebApp) -> dict[str, Any]:
         "update_check": settings.display_update_check,
         "auto_review": settings.display_auto_review,
         "auto_agenda": settings.display_auto_agenda,
+        "auto_tomorrow": settings.display_auto_tomorrow,
+        "auto_quiet": settings.display_auto_quiet,
+        "cycle": settings.display_cycle,
+        "duo": settings.display_duo,
     }
     readonly = {
         name: {
@@ -230,8 +276,23 @@ def handle(
         if not is_valid_choice(choice):
             return _error(HTTPStatus.BAD_REQUEST, "invalid_layout")
         assert isinstance(choice, str)  # narrows for mypy; is_valid_choice just checked it
+        # Optional in the same call: the cycle order and the duo pair, as a list of keys or
+        # the comma string; validated like the settings, nothing written when invalid.
+        options: dict[str, str] = {}
+        for key in ("cycle", "duo"):
+            if key not in payload:
+                continue
+            value = _list_setting(payload[key])
+            if value is None:
+                return _error(HTTPStatus.BAD_REQUEST, f"invalid_{key}")
+            options[key] = value
+        if options:
+            try:
+                update_overrides(app.settings, **options)
+            except ValueError as exc:
+                return _error(HTTPStatus.BAD_REQUEST, str(exc))
         save_layout_choice(app.settings, choice)
-        log.info("layout choice set to %s via the API", choice)
+        log.info("layout choice set to %s via the API (%s)", choice, options)
         return _json(HTTPStatus.OK, {"outcome": app.run_refresh()})
 
     if method == "POST" and path == "/api/refresh":
@@ -253,16 +314,7 @@ def handle(
         return _json(HTTPStatus.OK, _settings_get(app))
 
     if method == "POST" and path == "/api/settings/reset":
-        update_overrides(
-            app.settings,
-            language=None,
-            rotate=None,
-            quiet_hours=None,
-            clear_at=None,
-            update_check=None,
-            auto_review=None,
-            auto_agenda=None,
-        )
+        update_overrides(app.settings, **{key: None for key in RESETTABLE_KEYS})
         log.info("settings reset to the environment values via the API")
         return _json(HTTPStatus.OK, _settings_get(app))
 
@@ -273,6 +325,10 @@ def handle(
         unknown = set(payload) - SETTINGS_KEYS
         if unknown:
             return _error(HTTPStatus.BAD_REQUEST, f"unknown field(s): {', '.join(sorted(unknown))}")
+        # The two list settings may also arrive as JSON lists.
+        for key in ("cycle", "duo"):
+            if isinstance(payload.get(key), list):
+                payload[key] = _list_setting(payload[key])
         try:
             update_overrides(app.settings, **payload)
         except ValueError as exc:
