@@ -18,10 +18,16 @@ import httpx
 from PIL import Image
 
 from studylife_display import package_version
-from studylife_display.config import MIN_TOKEN_LENGTH, Settings
+from studylife_display.config import MIN_TOKEN_LENGTH, Settings, parse_layout_list
 from studylife_display.connect import local_hostname, setup_connect_url
 from studylife_display.credentials import ENV_FILE, apply_pending_credentials
-from studylife_display.current_frame import DASHBOARD, ERROR, SETUP, save_current_frame
+from studylife_display.current_frame import (
+    DASHBOARD,
+    ERROR,
+    SETUP,
+    load_current_frame,
+    save_current_frame,
+)
 from studylife_display.daily_clear import (
     clear_due,
     load_last_clear,
@@ -36,7 +42,7 @@ from studylife_display.model import DashboardData, build_dashboard
 from studylife_display.panel_lock import PanelLockTimeout, panel_lock
 from studylife_display.quiet_hours import in_quiet_hours, quiet_hours_end
 from studylife_display.render import render
-from studylife_display.sample import sample_payloads
+from studylife_display.sample import sample_extras, sample_payloads
 from studylife_display.settings_store import (
     effective_settings,
     export_layout_choice,
@@ -83,7 +89,23 @@ def build(snapshot: Snapshot, now: datetime, tz: ZoneInfo) -> DashboardData:
         tz,
         fetched_at=snapshot.fetched_at,
         sessions=snapshot.sessions,
+        goals=snapshot.goals,
+        achievements_payload=snapshot.achievements,
+        notes_payload=snapshot.notes,
+        unavailable=snapshot.unavailable,
     )
+
+
+def duo_pair(settings: Settings) -> tuple[str, str]:
+    """The two halves of the duo layout, from DISPLAY_DUO / the `duo` setting."""
+    left, right = parse_layout_list(settings.display_duo, "DISPLAY_DUO")
+    return left, right
+
+
+def previous_layout(state_dir: Path, tz: ZoneInfo) -> str | None:
+    """The layout of the frame on the panel right now (for the cycle choice), or None."""
+    frame = load_current_frame(state_dir, tz)
+    return frame.layout if frame is not None and frame.kind == DASHBOARD else None
 
 
 def present(display: Display, image: Image.Image, clear_first: bool = False) -> None:
@@ -102,8 +124,9 @@ def show(
     language: str,
     layout: str = "classic",
     clear_first: bool = False,
+    duo: tuple[str, str] | None = None,
 ) -> None:
-    present(display, render(data, language, layout), clear_first)
+    present(display, render(data, language, layout, duo), clear_first)
 
 
 def _client(settings: Settings) -> StudyLifeClient:
@@ -324,8 +347,10 @@ def refresh_panel(
 
     data = build(snapshot, now, tz)
     choice = layout_choice if layout_choice is not None else load_layout_choice(settings)
-    layout = resolve_layout(choice, data, rules_from_settings(settings))
-    image = render(data, language, layout)
+    layout = resolve_layout(
+        choice, data, rules_from_settings(settings), previous_layout(state_dir, tz)
+    )
+    image = render(data, language, layout, duo_pair(settings))
     if not _put_on_panel(
         settings,
         state_dir,
@@ -382,10 +407,22 @@ def command_preview(
     tz = zone(settings.studylife_timezone)
     now = datetime.now(tz)
     metrics, history, timer, sessions = sample_payloads(now, tz)
-    data = build_dashboard(metrics, history, timer, now, tz, sessions=sessions)
+    goals, achievements, notes = sample_extras(now, tz)
+    data = build_dashboard(
+        metrics,
+        history,
+        timer,
+        now,
+        tz,
+        sessions=sessions,
+        goals=goals,
+        achievements_payload=achievements,
+        notes_payload=notes,
+    )
     choice = layout_choice if layout_choice is not None else load_layout_choice(settings)
+    # A sample preview has no panel state, so "cycle" shows the first layout of the list.
     layout = resolve_layout(choice, data, rules_from_settings(settings))
-    show(FileDisplay(output), data, settings.display_language, layout)
+    show(FileDisplay(output), data, settings.display_language, layout, duo=duo_pair(settings))
     log.info("rendered %s (%s) to %s", layout, choice, output)
     return 0
 
@@ -475,8 +512,35 @@ def command_check(settings: Settings) -> int:
         },
         "heatmap": [[round(h, 2) for h in row] for row in data.heatmap],
         "course_hours": [[name, round(hours, 2)] for name, hours in data.course_hours],
+        "month_quota": {
+            "hours": data.month_quota.hours,
+            "target_min": data.month_quota.target_min,
+            "target_max": data.month_quota.target_max,
+            "percent": data.month_quota.percent,
+        },
+        "year": {
+            "total_hours": round(data.year.total_hours, 2),
+            "active_days": data.year.active_days,
+            "session_count": data.year.session_count,
+            "longest_streak_days": data.longest_streak_days,
+        },
+        "tomorrow": len(data.tomorrow),
+        "goals": len(data.goals),
+        "achievements": {
+            "unlocked": data.achievements.unlocked,
+            "total": data.achievements.total,
+        },
+        "notes": len(data.notes),
+        "unavailable": sorted(data.unavailable),
         "layout_choice": choice,
-        "layout": resolve_layout(choice, data, rules_from_settings(settings)),
+        "layout": resolve_layout(
+            choice,
+            data,
+            rules_from_settings(settings),
+            previous_layout(Path(settings.display_state_path).parent, tz),
+        ),
+        "cycle": list(rules_from_settings(settings).cycle),
+        "duo": list(duo_pair(settings)),
         "quiet_hours_active": in_quiet_hours(now, settings.display_quiet_hours),
     }
     print(json.dumps(report, indent=2, ensure_ascii=False))

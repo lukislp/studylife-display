@@ -23,7 +23,8 @@ from PIL import Image
 
 from studylife_display import main as main_module
 from studylife_display.config import Settings
-from studylife_display.settings_store import settings_path
+from studylife_display.layouts import LAYOUTS
+from studylife_display.settings_store import effective_settings, settings_path
 from studylife_display.snapshot import Snapshot, save_snapshot
 from studylife_display.status_store import Status, save_status
 from studylife_display.studylife_client import StudyLifeApiError
@@ -99,7 +100,12 @@ def offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def server(settings: Settings, offline: None) -> Iterator[DisplayServer]:
-    instance = make_server(settings, lambda: main_module.refresh_panel(settings), "127.0.0.1:0")
+    # Like make_serve_refresh: the refresh reads settings.json on top of the environment.
+    instance = make_server(
+        settings,
+        lambda: main_module.refresh_panel(effective_settings(settings)),
+        "127.0.0.1:0",
+    )
     thread = threading.Thread(target=instance.serve_forever, daemon=True)
     thread.start()
     try:
@@ -207,20 +213,18 @@ class TestLayouts:
         assert status == 200
         assert body["choice"] == "auto"
         keys = {option["key"] for option in body["options"]}
-        assert keys == {
-            "classic",
-            "focus",
-            "exam",
-            "week",
-            "semester",
-            "agenda",
-            "courses",
-            "milestone",
-            "review",
-        }
+        assert keys == set(LAYOUTS)
+        assert {"classic", "month", "year", "duo"} <= keys
         classic = next(o for o in body["options"] if o["key"] == "classic")
         assert set(classic["name"]) == {"de", "en"}
         assert set(classic["description"]) == {"de", "en"}
+        # The pseudo choices, the cycle order, the duo pair and which layouts can be a duo
+        # half travel alongside, so a client (studylife-hacs) can offer all of it.
+        assert [pseudo["key"] for pseudo in body["pseudo"]] == ["auto", "cycle"]
+        assert body["cycle"] == ["classic", "week", "agenda", "review"]
+        assert body["duo"] == ["focus", "agenda"]
+        assert body["next_in_cycle"] == "classic"
+        assert set(body["panes"]) == set(LAYOUTS) - {"duo"}
 
     def test_resolved_follows_the_cached_data(self, client: Client, cached: Path) -> None:
         _, body = client.json("GET", "/api/layouts")
@@ -265,6 +269,59 @@ class TestLayoutChange:
         assert status == 200
         assert body["outcome"] == "failed"
 
+    def test_duo_pair_and_cycle_order_travel_with_the_choice(
+        self, client: Client, cached: Path, settings: Settings
+    ) -> None:
+        status, body = client.json(
+            "POST",
+            "/api/layout",
+            {"layout": "duo", "duo": ["year", "month"], "cycle": "today,week"},
+        )
+        assert status == 200
+        assert body["outcome"] == "refreshed"
+        saved = json.loads(settings_path(settings).read_text(encoding="utf-8"))
+        assert saved == {"layout": "duo", "duo": "year,month", "cycle": "today,week"}
+        _, layouts = client.json("GET", "/api/layouts")
+        assert layouts["choice"] == "duo"
+        assert layouts["duo"] == ["year", "month"]
+        assert layouts["cycle"] == ["today", "week"]
+        # The cycle choice steps on from the frame now on the panel (a duo frame is not in
+        # the list, so it restarts at the first entry).
+        assert layouts["next_in_cycle"] == "today"
+
+    def test_cycle_steps_on_from_the_shown_frame(
+        self, client: Client, settings: Settings, sample: Any, tz: ZoneInfo
+    ) -> None:
+        # A fresh cache, so the refresh draws a dashboard (not the stale screen) and
+        # current.json names a layout the next refresh can step on from.
+        fresh_cache(settings, sample, tz)
+        client.json("POST", "/api/layout", {"layout": "cycle", "cycle": ["week", "month"]})
+        _, state = client.json("GET", "/api/state")
+        assert state["current_frame"]["layout"] == "week"
+        _, layouts = client.json("GET", "/api/layouts")
+        assert layouts["next_in_cycle"] == "month"
+        client.json("POST", "/api/refresh")
+        _, state = client.json("GET", "/api/state")
+        assert state["current_frame"]["layout"] == "month"
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"layout": "duo", "duo": ["year"]},
+            {"layout": "duo", "duo": "year,holographic"},
+            {"layout": "duo", "duo": 42},
+            {"layout": "cycle", "cycle": []},
+            {"layout": "cycle", "cycle": "auto,classic"},
+        ],
+    )
+    def test_invalid_pair_or_order_is_a_400_and_nothing_is_written(
+        self, client: Client, settings: Settings, payload: dict[str, Any]
+    ) -> None:
+        status, body = client.json("POST", "/api/layout", payload)
+        assert status == 400
+        assert "error" in body
+        assert not settings_path(settings).exists()
+
 
 class TestImages:
     def test_current_png_is_a_404_before_the_first_refresh(self, client: Client) -> None:
@@ -304,7 +361,13 @@ class TestSettings:
             "update_check": False,
             "auto_review": False,
             "auto_agenda": False,
+            "auto_tomorrow": False,
+            "auto_quiet": False,
+            "cycle": False,
+            "duo": False,
         }
+        assert body["values"]["cycle"] == "classic,week,agenda,review"
+        assert body["values"]["duo"] == "focus,agenda"
         assert body["readonly"]["STUDYLIFE_API_KEY"] == {"set": True, "value": None}
         assert body["readonly"]["DISPLAY_API_TOKEN"] == {"set": True, "value": None}
         # pydantic's AnyHttpUrl normalises to a trailing slash.

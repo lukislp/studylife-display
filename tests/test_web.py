@@ -258,6 +258,45 @@ class TestActions:
         with Image.open(settings.display_output_path) as image:
             assert image.size == (800, 480)
 
+    def test_layout_post_saves_the_cycle_order_and_the_duo_pair(
+        self, client: Client, cached: Path, settings: Settings
+    ) -> None:
+        client.login()
+        form = {"layout": "duo", "cycle": "today, year", "duo_left": "month", "duo_right": "week"}
+        status, headers, _ = client.request("POST", "/layout", form, headers=client.same_origin())
+        assert status == 303
+        assert headers["location"] == "/?m=saved"
+        settings_file = cached.parent / "settings.json"
+        assert json.loads(settings_file.read_text(encoding="utf-8")) == {
+            "layout": "duo",
+            "cycle": "today,year",
+            "duo": "month,week",
+        }
+        _, _, body = client.request("GET", "/")
+        assert b"<option value='month' selected>" in body
+        assert b"<option value='week' selected>" in body
+        assert b"value='today,year'" in body
+
+    def test_invalid_duo_pair_is_a_400_and_nothing_is_written(
+        self, client: Client, cached: Path
+    ) -> None:
+        client.login()
+        form = {"layout": "duo", "duo_left": "month", "duo_right": "month"}
+        status, _, _ = client.request("POST", "/layout", form, headers=client.same_origin())
+        assert status == 400
+        assert not (cached.parent / "settings.json").exists()
+
+    def test_the_layouts_page_lists_the_pseudo_choices_and_every_layout(
+        self, client: Client, cached: Path
+    ) -> None:
+        client.login()
+        _, _, body = client.request("GET", "/")
+        assert b"value='auto'" in body and b"value='cycle'" in body
+        assert b"Wechsel" in body
+        for key in ("month", "year", "duo", "quiet", "note"):
+            assert f"value='{key}'".encode() in body
+        assert b"name='duo_left'" in body and b"name='duo_right'" in body
+
     def test_refresh_post_only_refreshes(
         self, client: Client, cached: Path, settings: Settings
     ) -> None:
@@ -856,7 +895,8 @@ class TestSettingsPage:
         assert b"<option value='de' selected>" in body
         assert b"<option value='0' selected>" in body
         assert b"value='04:00'" in body
-        assert body.count(b"aus Umgebung/Standard") == 7
+        # language, rotate, quiet_hours, clear_at, four auto windows, update_check
+        assert body.count(b"aus Umgebung/Standard") == 9
         assert b"studylife-display.timer" in body
         assert b"STUDYLIFE_BASE_URL" in body and BASE_URL.encode() in body
         assert b"STUDYLIFE_API_KEY" in body and b"gesetzt" in body
@@ -877,6 +917,8 @@ class TestSettingsPage:
             "update_check": "on",
             "auto_review": "sat,sun 19-23",
             "auto_agenda": "",
+            "auto_tomorrow": "19-22",
+            "auto_quiet": "22-23",
         }
         status, headers, _ = client.request("POST", "/settings", form, headers=client.same_origin())
         assert status == 303
@@ -890,9 +932,13 @@ class TestSettingsPage:
             "update_check": True,
             "auto_review": "sat,sun 19-23",
             "auto_agenda": "",
+            "auto_tomorrow": "19-22",
+            "auto_quiet": "22-23",
         }
         effective = effective_settings(settings)
         assert effective.display_language == "en"
+        assert effective.display_auto_tomorrow == "19-22"
+        assert effective.display_auto_quiet == "22-23"
         assert effective.display_rotate == 180
         assert effective.display_quiet_hours == "23-7"
         assert effective.display_clear_at == "05:30"
@@ -902,7 +948,7 @@ class TestSettingsPage:
         assert settings.display_language == "de"  # the environment object is untouched
         _, _, body = client.request("GET", "/settings?m=saved")
         assert b"Settings saved." in body
-        assert body.count(b"from settings.json") == 7
+        assert body.count(b"from settings.json") == 9
         assert b"value='sat,sun 19-23'" in body
         assert b"<option value='180' selected>" in body
         _, _, body = client.request("GET", "/")
@@ -964,9 +1010,14 @@ class TestSettingsPage:
         seen: list[DashboardData] = []
         real_render = main_module.render
 
-        def spy(data: DashboardData, language: str, layout: str = "classic") -> Image.Image:
+        def spy(
+            data: DashboardData,
+            language: str,
+            layout: str = "classic",
+            duo: tuple[str, str] | None = None,
+        ) -> Image.Image:
             seen.append(data)
-            return real_render(data, language, layout)
+            return real_render(data, language, layout, duo)
 
         monkeypatch.setattr(main_module, "render", spy)
 

@@ -4,6 +4,7 @@ and a small streak/today line at the bottom."""
 
 from __future__ import annotations
 
+from PIL import Image as _PilImage
 from PIL import ImageDraw
 from PIL.Image import Image
 
@@ -45,6 +46,16 @@ BAR_RIGHT = WIDTH - MARGIN - 90
 TOP_COURSES = 5
 
 FOOTER_RULE_Y = 428
+
+# The pane form: a smaller hero block, the label, course and date stacked underneath.
+PANE_BLOCK_TOP = 8
+PANE_BLOCK_BOTTOM = 78
+PANE_BLOCK_WIDTH = 240
+PANE_BLOCK_BASELINE = 57
+PANE_BLOCK_BODY_BASELINE = 52
+PANE_LABEL_BASELINE = 112
+PANE_COURSE_BASELINE = 152
+PANE_DATE_BASELINE = 186
 
 
 def _draw_hero(
@@ -104,3 +115,38 @@ def render(data: DashboardData, language: str) -> Image:
     )
     draw_footer_line(draw, footer, fonts, FOOTER_RULE_Y)
     return finish(canvas)
+
+
+def render_pane(
+    image: _PilImage.Image,
+    draw: ImageDraw.ImageDraw,
+    data: DashboardData,
+    fonts: Fonts,
+    language: str,
+    box: tuple[int, int, int, int],
+) -> None:
+    """The countdown block with the course and its date underneath, or the placeholder in
+    the block when nothing is upcoming."""
+    t = TEXT[language]
+    left, top, right, _ = box
+    width = right - left
+    block = (left, top + PANE_BLOCK_TOP, left + PANE_BLOCK_WIDTH, top + PANE_BLOCK_BOTTOM)
+    goal = data.next_goal
+    if goal is None:
+        text = ellipsize(t["goal_none"], fonts.body, PANE_BLOCK_WIDTH - 20)
+        draw_inverted_block(draw, block, text, fonts.body, top + PANE_BLOCK_BODY_BASELINE, 10)
+        return
+    countdown = format_countdown(goal.days_left, t)
+    if text_width(countdown, fonts.value) <= PANE_BLOCK_WIDTH - 24:
+        draw_inverted_block(draw, block, countdown, fonts.value, top + PANE_BLOCK_BASELINE, 10)
+    else:
+        text = ellipsize(countdown, fonts.body, PANE_BLOCK_WIDTH - 20)
+        draw_inverted_block(draw, block, text, fonts.body, top + PANE_BLOCK_BODY_BASELINE, 10)
+    draw_text(draw, (left, top + PANE_LABEL_BASELINE), t["goal_label"], fonts.label)
+    name = ellipsize(goal.course_name or t["course_unknown"], fonts.value, width)
+    draw_text(draw, (left, top + PANE_COURSE_BASELINE), name, fonts.value)
+    if goal.target_date is not None:
+        date = t["goal_date"].format(date=goal.target_date.strftime(t["goal_date_format"]))
+        draw_text(
+            draw, (left, top + PANE_DATE_BASELINE), ellipsize(date, fonts.body, width), fonts.body
+        )

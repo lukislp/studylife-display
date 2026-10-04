@@ -1,6 +1,6 @@
 """Draws a DashboardData onto an 800x480 black/white frame, in the layout asked for.
 
-Pure: same data + language + layout -> same pixels. The drawing itself lives in
+Pure: same data + language + layout (+ duo pair) -> same pixels. The drawing itself lives in
 `studylife_display.layouts`; this module is the entry point the pipeline and the tests use,
 and it re-exports the helpers that tests and callers historically imported from here.
 """
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from PIL import Image
 
-from studylife_display.layouts import LAYOUTS
+from studylife_display.layouts import DUO, LAYOUTS
 from studylife_display.layouts.classic import COUNTDOWN_BOX
 from studylife_display.layouts.common import (
     HEIGHT,
@@ -21,6 +21,7 @@ from studylife_display.layouts.common import (
     load_fonts,
     text_width,
 )
+from studylife_display.layouts.duo import render_pair
 from studylife_display.model import DashboardData
 
 __all__ = [
@@ -37,10 +38,18 @@ __all__ = [
 ]
 
 
-def render(data: DashboardData, language: str, layout: str = "classic") -> Image.Image:
+def render(
+    data: DashboardData,
+    language: str,
+    layout: str = "classic",
+    duo: tuple[str, str] | None = None,
+) -> Image.Image:
     """Renders the dashboard as an 800x480 mode "1" image, black on white, in `layout`
-    (a key of LAYOUTS; "auto" must already be resolved by the caller)."""
+    (a key of LAYOUTS; "auto" and "cycle" must already be resolved by the caller). For the
+    "duo" layout `duo` names the two halves (left, right); None draws the default pair."""
     spec = LAYOUTS.get(layout)
     if spec is None:
         raise ValueError(f"unknown layout {layout!r} (known: {', '.join(LAYOUTS)})")
+    if layout == DUO and duo is not None:
+        return render_pair(data, language, duo)
     return spec.render(data, language)

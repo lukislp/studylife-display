@@ -46,6 +46,18 @@ empty = no session, light hatch = under 1 h, dense hatch = under 2.5 h, solid = 
 | `review` | The weekly review: this week's hours large with the change against the week before (sign and an up/down marker), the course studied most, the session count and the streak on the right, the seven days Monday to Sunday as small bars, and StudyLife's own `weeklyReport` of the previous week in the footer. The hero figures are summed on the Pi from the session history for the current week, because the server's report always describes the last *completed* week | ![review](docs/preview-review.png) |
 | `courses` | Hours per course over the last 28 days as the whole frame - the same bar chart `exam` fits under its countdown block, given the full canvas and up to 9 rows, with the summed total as a small hero line up top. Never picked by `auto` | ![courses](docs/preview-courses.png) |
 | `milestone` | A celebration screen for the streak: the day count, huge, under "SERIEN-MEILENSTEIN" / "STREAK MILESTONE". `auto` only ever picks it on the one day the streak actually hits a round number (7, 14, 21, 30, 50, 100, 150, 200, 250, 300, 365, 500, 750, 1000); picking it by hand always shows today's real streak | ![milestone](docs/preview-milestone.png) |
+| `month` | The month target as a large bar with hours, range and percent, the days of the month as a strip (today's tick thicker), days left and what is still needed per day for the minimum; the footer compares with the previous month and, with a year of data, with the same month a year ago (`metrics/summary` -> `monthQuota`, `monthComparison`). Never picked by `auto` | ![month](docs/preview-month.png) |
+| `exams` | Every upcoming course goal as a list (up to five): an inverted countdown block, course and date, and the hours spent on that course in the last 28 days. Never picked by `auto` | ![exams](docs/preview-exams.png) |
+| `year` | 53 Monday-to-Sunday weeks as a heatmap with month labels, under it total hours, active days, sessions and the longest streak (`streak.longest`); the history window grew to 371 days for it. Never picked by `auto` | ![year](docs/preview-year.png) |
+| `balance` | Each course's share of the all-time hours (`metrics/summary` -> `courseHours`) as a bar with a tick at the even share; courses below half of that are tagged "zu kurz"; the footer names the neglected course. Never picked by `auto` | ![balance](docs/preview-balance.png) |
+| `timer` | The running phase with its remaining time (a snapshot, like `focus`) next to today's tally from the history: sessions today, hours, the longest session, first start and last end. Never picked by `auto` | ![timer](docs/preview-timer.png) |
+| `tomorrow` | Tomorrow's plan from `GET /api/sessions`: the first session large (time, course, topic), the rest as rows, a "N Sessions · X h geplant" line. Picked by `auto` in the evening while tomorrow has sessions (see below) | ![tomorrow](docs/preview-tomorrow.png) |
+| `today` | Today's hours, huge, readable across the room, with the session count, the streak and what is left to the daily target (the week minimum spread over seven days). Never picked by `auto` | ![today](docs/preview-today.png) |
+| `goals` | The course goals from `GET /api/coursegoals` (scope `CourseGoals.GetAll`): open ones with target date and countdown, completed ones ticked with their grade and completion date. Never picked by `auto` | ![goals](docs/preview-goals.png) |
+| `achievements` | Unlocked of all achievements from `GET /api/metrics/achievements` (scope `Metrics.GetAchievements`) with a progress bar, the latest tier reached, the next one with its progress, and the tiers per category. Never picked by `auto` | ![achievements](docs/preview-achievements.png) |
+| `note` | The newest note from `GET /api/notes` (scope `Notes.GetAll`) as a study sheet: title, a word-wrapped plain-text excerpt (the server's summary when there is one) and when it was updated, plus the next two notes' titles. Never picked by `auto` | ![note](docs/preview-note.png) |
+| `quiet` | The minimal frame for the night: weekday and date large, the streak, tomorrow's first session, lots of white. Picked by `auto` inside the night window (see below), never otherwise | ![quiet](docs/preview-quiet.png) |
+| `duo` | Two layouts side by side, each in its compact pane form, with the layout names above the halves; which two is `DISPLAY_DUO` / the duo setting (default `focus,agenda`). Every layout but `duo` itself has a pane. Never picked by `auto` | ![duo](docs/preview-duo.png) |
 
 Every layout keeps the header line (date, "aktualisiert HH:MM" and the stale marker), because
 that line is the only way to tell an old frame from a fresh one.
@@ -60,17 +72,27 @@ error screens are decided before any of them):
 3. otherwise `exam` when the next course goal is due in **7 days or fewer** (today, overdue
    and negative counts included);
 4. otherwise `focus` while a timer is running;
-5. otherwise `agenda` while at least one session planned for today has not ended yet and the
+5. otherwise `quiet` inside the night window - **off by default** (`DISPLAY_AUTO_QUIET=`,
+   e.g. `22-23` for the hour before the quiet hours, so the frame that stays up all night is
+   the calm one);
+6. otherwise `agenda` while at least one session planned for today has not ended yet and the
    time is inside the agenda window - by default **06:00 to 12:00** (`DISPLAY_AUTO_AGENDA=06-12`);
-6. otherwise `classic`.
+7. otherwise `tomorrow` while tomorrow has sessions planned and the time is inside the
+   tomorrow window - by default **18:00 to 23:00** (`DISPLAY_AUTO_TOMORROW=18-23`);
+8. otherwise `classic`.
 
-The two windows use the quiet-hours notation with an optional list of weekdays in front
+The four windows use the quiet-hours notation with an optional list of weekdays in front
 (`sun`, `sat,sun`, `mon-fri`; `24` is allowed as the end, a window may not wrap past
 midnight) and can be changed on the settings page; an empty window switches that rule off.
-`semester` and `courses` are never chosen automatically: they are views to switch to on
-purpose. The
-choice comes from, in order of precedence, `settings.json` next to the cached snapshot
-(written by the web interface) and the `DISPLAY_LAYOUT` variable. Switching layouts is a full
+Every other layout is never chosen automatically: they are views to switch to on purpose.
+
+`cycle` is the second choice that is not a layout: every refresh shows the next layout of a
+configured list (`DISPLAY_CYCLE`, default `classic,week,agenda,review`; the layouts page and
+`/api/layout` can change it), starting over after the last one or whenever the frame on the
+panel is not part of the list. Only the content changes - the panel's orientation is
+`DISPLAY_ROTATE` alone and never moves by itself. The choice comes from, in order of
+precedence, `settings.json` next to the cached snapshot (written by the web interface) and
+the `DISPLAY_LAYOUT` variable. Switching layouts is a full
 refresh of the panel like every other update. `studylife-display preview --sample --layout
 <key|auto> --out frame.png` renders any of them without a panel or an instance.
 
@@ -198,7 +220,8 @@ detects that; connect first, enable the overlay afterwards.
 ### Settings in the web interface
 
 `Einstellungen` holds language, rotation, quiet hours, the daily clear time, the update
-check and the two windows of the auto rules (weekly review, agenda). They are saved into the
+check and the four windows of the auto rules (weekly review, agenda, tomorrow, night); the
+layouts page itself holds the cycle order and the duo pair under the layout cards. They are saved into the
 same `settings.json` as the layout choice (so they survive a
 reboot the same way, see [SD-card protection](#sd-card-protection)), validated with the
 same rules as the environment variables (an invalid value is shown next to the field and
@@ -260,13 +283,13 @@ second, separate opt-in from the web interface:
 | Route | Method | What it does |
 | --- | --- | --- |
 | `/api/state` | GET | `/healthz`'s report plus `layout_choice` (the persisted preference) and `current_frame` (what is on the panel right now: `shown_at`, `layout`, `kind`). Same HTTP status as `/healthz` (503 for `"error"`). |
-| `/api/layouts` | GET | `{"choice", "resolved", "options": [{"key", "name": {"de","en"}, "description": {"de","en"}}, ...]}` - the layout picker's cards, without the HTML. |
-| `/api/layout` | POST | `{"layout": "focus"}` - saves the choice and refreshes the panel, like "Apply"/"Übernehmen". `{"outcome": "refreshed"\|"failed"}`; an unknown key is a 400. |
+| `/api/layouts` | GET | `{"choice", "resolved", "next_in_cycle", "cycle", "duo", "pseudo", "options", "panes"}` - the layout picker as data: the persisted choice, what `auto` would draw right now, what `cycle` would draw next, the cycle order and the duo pair as lists of keys, the two pseudo choices and the layouts as `[{"key", "name": {"de","en"}, "description": {"de","en"}}, ...]`, and the keys that can be a duo half. |
+| `/api/layout` | POST | `{"layout": "focus"}` - saves the choice and refreshes the panel, like "Apply"/"Übernehmen". Optionally in the same call `"cycle": ["today", "week"]` and/or `"duo": ["year", "month"]` (lists of keys or the comma string), validated like the settings. `{"outcome": "refreshed"\|"failed"}`; an unknown key, pair or order is a 400 and nothing is written. |
 | `/api/refresh` | POST | Refreshes without changing the layout; `{"outcome": ...}` like above. |
 | `/api/current.png` | GET | The frame that is on the panel right now (PNG), like the cookie route; 404 before the first one. |
 | `/api/preview/<key>.png` | GET | A preview of `<key>` rendered from the cached data (PNG); 404 for an unknown key. |
 | `/api/settings` | GET | `{"values", "sources", "readonly"}` - the settings page's fields, which key came from `settings.json` vs. the environment, and the environment-only fields as `{"set": bool, "value": str\|null}` (a secret such as the API key or either token is `"set"` only, never shown). |
-| `/api/settings` | POST | A JSON object with any subset of `language`, `rotate`, `quiet_hours`, `clear_at`, `update_check`, `auto_review`, `auto_agenda` - unlike the web form (which always resubmits every field), an omitted key is left untouched and an explicit `null` resets that one key to the environment value. Validated with the same rules as the environment; an invalid value or an unknown field is a 400 and nothing is written. |
+| `/api/settings` | POST | A JSON object with any subset of `language`, `rotate`, `quiet_hours`, `clear_at`, `update_check`, `auto_review`, `auto_agenda`, `auto_tomorrow`, `auto_quiet`, `cycle`, `duo` (the last two as a comma string or a list of keys) - unlike the web form (which always resubmits every field), an omitted key is left untouched and an explicit `null` resets that one key to the environment value. Validated with the same rules as the environment; an invalid value or an unknown field is a 400 and nothing is written. |
 | `/api/settings/reset` | POST | Resets every settings.json field to the environment values, like "Reset"/"Auf Umgebungswerte zurücksetzen". |
 | `/api/connect` | GET | `{"identity", "pending", "overlay_warning", "mode", "redirect_uri", "client_id", "scopes"}` - the connect page's state as data. `identity` is `{"connected": bool, "instance", "user_id", "credential", "error"}` from `GET /api/auth/whoami`. |
 | `/api/connect/start` | POST | Begins a connect attempt, like "Start connecting"; returns `{"connect_url", "redirect_uri", "expires_at"}`. |
@@ -301,24 +324,27 @@ Register the display as a client on your StudyLife instance through
 | Field | Value |
 | --- | --- |
 | Client ID | `studylife-display` |
-| Requested scopes | `Metrics.GetSummary`, `Sessions.GetAll`, `Sessions.GetHistory`, `TimerState.Get` |
+| Requested scopes | `Metrics.GetSummary`, `Sessions.GetAll`, `Sessions.GetHistory`, `TimerState.Get`, `CourseGoals.GetAll`, `Metrics.GetAchievements`, `Notes.GetAll` |
 | Redirect URIs | `http://localhost:8795/connect/callback` (the port from `DISPLAY_WEB_BIND`), plus `https://<DISPLAY_PUBLIC_BASE_URL>/connect/callback` if you use one |
 
 | Scope | Endpoint |
 | --- | --- |
 | `Metrics.GetSummary` | `GET /api/metrics/summary` |
 | `Sessions.GetAll` | `GET /api/sessions` (the full list incl. planned sessions, for the `agenda` layout; polled with `If-None-Match`, so an unchanged list costs a 304 and no body) |
-| `Sessions.GetHistory` | `GET /api/sessions/history?days=28&onlyCompleted=true` |
+| `Sessions.GetHistory` | `GET /api/sessions/history?days=371&onlyCompleted=true` (53 weeks, for the `year` layout; everything else uses the last 28 days of it) |
 | `TimerState.Get` | `GET /api/timerstate` |
+| `CourseGoals.GetAll` | `GET /api/coursegoals` (the `goals` layout) |
+| `Metrics.GetAchievements` | `GET /api/metrics/achievements` (the `achievements` layout) |
+| `Notes.GetAll` | `GET /api/notes` (the `note` layout; only the newest three notes are kept, with their content cut to 800 characters, before anything is cached) |
 
 `Auth.Whoami` is implied for every key. Nothing here writes: the display cannot start,
 stop or change a session, so a key that ends up on a lost SD card can only ever read your
-study statistics. `Sessions.GetAll` is the one scope that is optional in practice: a key
-issued without it (every key from before the `agenda` layout existed) still drives every
-other layout, the session list is simply treated as empty, the refresh logs a warning, and
-`/healthz` and the layouts page say so (`sessions_ok`). To get the agenda, add the scope to
-the client in studylife-developers and connect again so that a key with all four scopes is
-issued. Then put the instance URL into `/etc/studylife-display.env` and connect
+study statistics. The last four scopes are optional in practice: a key issued without one of
+them (every key from before the layout that needs it existed) still drives every other
+layout - the missing payload is treated as empty, the refresh logs a warning, the layout
+that needs it says which scope is missing, and for the session list `/healthz` and the
+layouts page say so too (`sessions_ok`). To get those layouts, add the scopes to the client
+in studylife-developers and connect again so that a key with all seven scopes is issued. Then put the instance URL into `/etc/studylife-display.env` and connect
 from the web interface (`http://<hostname>.local:8795/connect`, see
 [Connecting the account](#connecting-the-account)); the key lands in the environment file
 by itself. Issuing a key by hand in studylife-developers and pasting it into
@@ -342,9 +368,13 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 | `DISPLAY_CLEAR_AT` | `04:00` | Time of the daily full clear against ghosting; empty = off (*web*) |
 | `DISPLAY_UPDATE_CHECK` | `false` | Let the web interface ask GitHub (once per 6 h) whether a newer release exists (*web*) |
 | `DISPLAY_AUTO_UPDATE` | `false` | Let `studylife-display-update.timer` install a newer release once a day, unattended; see [Updating](#updating) |
-| `DISPLAY_LAYOUT` | `auto` | `auto`, `classic`, `focus`, `exam`, `week`, `semester`, `agenda`, `review`, `courses` or `milestone`; overridden by the choice made in the web interface |
+| `DISPLAY_LAYOUT` | `auto` | `auto`, `cycle` or any layout key from [Layouts](#layouts) (`classic`, `focus`, `exam`, `week`, `semester`, `agenda`, `review`, `courses`, `milestone`, `month`, `exams`, `year`, `balance`, `timer`, `tomorrow`, `today`, `goals`, `achievements`, `note`, `quiet`, `duo`); overridden by the choice made in the web interface |
 | `DISPLAY_AUTO_REVIEW` | `sun 18-24` | Window of the `review` rule in `auto`: `[weekdays] HH-HH` or `HH:MM-HH:MM` (`24` = midnight, no wrap past midnight); empty = rule off (*web*) |
 | `DISPLAY_AUTO_AGENDA` | `06-12` | Window of the `agenda` rule in `auto`, same notation; empty = rule off (*web*) |
+| `DISPLAY_AUTO_TOMORROW` | `18-23` | Window of the `tomorrow` rule in `auto`, same notation; empty = rule off (*web*) |
+| `DISPLAY_AUTO_QUIET` | – | Window of the `quiet` rule in `auto`, same notation; empty = rule off (*web*) |
+| `DISPLAY_CYCLE` | `classic,week,agenda,review` | The layouts the `cycle` choice steps through, comma-separated, in this order; at least one, no pseudo choices (*web*, on the layouts page) |
+| `DISPLAY_DUO` | `focus,agenda` | The two halves of the `duo` layout, `left,right`, two different layout keys (*web*, on the layouts page) |
 | `DISPLAY_PERSIST_PATH` | `/boot/firmware/studylife-display/settings.json` | Copy of the web interface's choice on the boot partition, restored at boot (see [SD-card protection](#sd-card-protection)); empty disables it |
 | `DISPLAY_WEB_BIND` | `0.0.0.0:8795` | Where `serve` listens |
 | `DISPLAY_WEB_TOKEN` | – | Access token of the web interface, at least 12 characters; `serve` refuses to start without one |
@@ -551,7 +581,7 @@ The `pi` extra is not installed by `uv sync` and is never imported outside
 `tests/golden/<layout>_<language>.png` are the reference frames; after an intentional layout
 change regenerate them with `uv run pytest --update-goldens` and commit the result together
 with the previews in `docs/` (`uv run studylife-display preview --sample --layout <key> --out
-docs/preview-<key>.png` for each of the seven; `docs/preview.png` is the classic one).
+docs/preview-<key>.png` for each layout; `docs/preview.png` is the classic one).
 Layouts live in `src/studylife_display/layouts/`, one module each, registered in
 `layouts/__init__.py`; the drawing helpers they share are in `layouts/common.py`, the error
 screens in `layouts/error.py`, the setup screen (QR code via `segno`, drawn module by module)

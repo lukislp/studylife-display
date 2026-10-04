@@ -16,8 +16,13 @@ from studylife_display import main as main_module
 from studylife_display.current_frame import load_current_frame
 from studylife_display.main import Snapshot, load_snapshot, main, save_snapshot
 from studylife_display.model import DashboardData
+from studylife_display.sample import sample_extras
+from studylife_display.snapshot import HISTORY_DAYS
 
 BASE_URL = "https://studylife.test"
+# The same anchor as conftest.FIXED_NOW (tests/ is not a package, so it cannot be imported).
+BERLIN = ZoneInfo("Europe/Berlin")
+FIXED_NOW = datetime(2026, 9, 17, 16, 45, tzinfo=BERLIN)
 
 
 @pytest.fixture
@@ -39,9 +44,14 @@ def rendered(monkeypatch: pytest.MonkeyPatch) -> list[DashboardData]:
     seen: list[DashboardData] = []
     real_render = main_module.render
 
-    def spy(data: DashboardData, language: str, layout: str = "classic") -> Image.Image:
+    def spy(
+        data: DashboardData,
+        language: str,
+        layout: str = "classic",
+        duo: tuple[str, str] | None = None,
+    ) -> Image.Image:
         seen.append(data)
-        return real_render(data, language, layout)
+        return real_render(data, language, layout, duo)
 
     monkeypatch.setattr(main_module, "render", spy)
     return seen
@@ -78,6 +88,17 @@ def mock_api(
     respx.get(f"{BASE_URL}/api/sessions").mock(
         return_value=httpx.Response(200, json=sessions, headers={"ETag": SESSIONS_ETAG})
     )
+    mock_extras()
+
+
+def mock_extras() -> None:
+    """The three optional endpoints (course goals, achievements, notes) with sample data."""
+    goals, achievements, notes = sample_extras(FIXED_NOW, BERLIN)
+    respx.get(f"{BASE_URL}/api/coursegoals").mock(return_value=httpx.Response(200, json=goals))
+    respx.get(f"{BASE_URL}/api/metrics/achievements").mock(
+        return_value=httpx.Response(200, json=achievements)
+    )
+    respx.get(f"{BASE_URL}/api/notes").mock(return_value=httpx.Response(200, json=notes))
 
 
 @respx.mock
@@ -95,15 +116,26 @@ def test_run_fetches_renders_and_caches(
         "timer",
         "sessions",
         "sessions_etag",
+        "goals",
+        "achievements",
+        "notes",
     }
     assert cached["metrics"] == sample[0]
     assert cached["sessions"] == sample[3]
     assert cached["sessions_etag"] == SESSIONS_ETAG
+    goals, achievements, notes = sample_extras(FIXED_NOW, BERLIN)
+    assert cached["goals"] == goals
+    assert cached["achievements"] == achievements
+    # Notes are trimmed before caching: the newest few, title and a cut-down content.
+    assert [note["title"] for note in cached["notes"]] == [note["title"] for note in notes]
+    assert all(len(note["content"]) <= 800 for note in cached["notes"])
     assert rendered[0].stale_minutes == 0
     assert rendered[0].streak_days == 12
+    assert rendered[0].unavailable == frozenset()
+    assert len(rendered[0].goals) == len(goals)
     history_call = respx.get(f"{BASE_URL}/api/sessions/history").calls.last
     assert history_call.request.headers["X-Api-Key"] == "test-key"
-    assert history_call.request.url.params["days"] == "28"
+    assert history_call.request.url.params["days"] == str(HISTORY_DAYS)
     assert history_call.request.url.params["onlyCompleted"] == "true"
     sessions_call = respx.get(f"{BASE_URL}/api/sessions").calls.last
     assert "if-none-match" not in sessions_call.request.headers  # nothing cached yet
@@ -275,7 +307,7 @@ def test_check_prints_what_it_got(
     assert len(report["heatmap"]) == 4
     # `check` runs at the real clock, the sample sessions sit on FIXED_NOW's day: the raw
     # count is stable, the agenda is not.
-    assert report["sessions"] == 4 and report["sessions_ok"] is True
+    assert report["sessions"] == 7 and report["sessions_ok"] is True
     assert isinstance(report["agenda"], list)
     assert report["weekly_report"]["session_count"] == 7
     assert report["this_week"]["week_id"]

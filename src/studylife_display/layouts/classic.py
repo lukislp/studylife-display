@@ -160,3 +160,46 @@ def render(data: DashboardData, language: str) -> Image.Image:
     _draw_timer(draw, data, fonts, t)
 
     return finish(canvas)
+
+
+def render_pane(
+    image: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    data: DashboardData,
+    fonts: Fonts,
+    language: str,
+    box: tuple[int, int, int, int],
+) -> None:
+    """Today's hours with the unit at the top, streak and next exam as two label/value
+    pairs under it, and a small week-quota bar with the percent at the bottom of the box."""
+    t = TEXT[language]
+    left, top, right, bottom = box
+    max_width = right - left
+
+    number = format_hours_clock(data.today_hours)
+    unit = t["today_unit"]
+    unit_width = text_width(unit, fonts.big_unit)
+    font = fonts.big
+    if text_width(number, font) + 12 + unit_width > max_width:
+        font = fonts.big_narrow
+    hours_baseline = top + 100
+    end_x = draw_text(draw, (left, hours_baseline), number, font)
+    draw_text(draw, (end_x + 12, hours_baseline - 4), unit, fonts.big_unit)
+
+    draw_text(draw, (left, top + 142), t["streak_label"], fonts.label)
+    draw_text(draw, (left, top + 180), format_streak(data.streak_days, t), fonts.value)
+
+    draw_text(draw, (left, top + 220), t["goal_label"], fonts.label)
+    goal = data.next_goal
+    if goal is None:
+        draw_text(draw, (left, top + 252), t["goal_none"], fonts.body)
+    else:
+        line = f"{goal.course_name or t['course_unknown']} {format_countdown(goal.days_left, t)}"
+        draw_text(draw, (left, top + 252), ellipsize(line, fonts.body, max_width), fonts.body)
+
+    bar_height = 14
+    bar_top = bottom - bar_height - 2
+    percent = t["quota_percent"].format(percent=int(round(data.week_quota.percent)))
+    draw_text(draw, (left, bar_top - 10), t["quota_label"], fonts.small)
+    draw_text(draw, (right, bar_top - 10), percent, fonts.small, anchor="rs")
+    draw_quota_bar(draw, data.week_quota, left, bar_top, right, bar_height, tick_overhang=3)

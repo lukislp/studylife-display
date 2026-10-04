@@ -8,12 +8,13 @@ today's real streak, milestone or not.
 
 from __future__ import annotations
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from studylife_display.layouts.common import (
     MARGIN,
     TEXT,
     WIDTH,
+    Fonts,
     draw_footer_line,
     draw_header,
     draw_text,
@@ -65,3 +66,28 @@ def render(data: DashboardData, language: str) -> Image.Image:
     )
     draw_footer_line(draw, ellipsize(footer, fonts.body, WIDTH - 2 * MARGIN), fonts, FOOTER_RULE_Y)
     return finish(canvas)
+
+
+def render_pane(
+    image: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    data: DashboardData,
+    fonts: Fonts,
+    language: str,
+    box: tuple[int, int, int, int],
+) -> None:
+    """The milestone label, the streak number in the big font and the unit under it, all
+    centred in the box."""
+    t = TEXT[language]
+    left, top, right, bottom = box
+    centre = (left + right) / 2
+    middle = (top + bottom) / 2
+    max_width = right - left
+
+    label = ellipsize(t["milestone_label"], fonts.label, max_width)
+    draw_text(draw, (centre, middle - 80), label, fonts.label, anchor="ms")
+    number = str(data.streak_days)
+    font = fonts.big if text_width(number, fonts.big) <= max_width else fonts.big_narrow
+    draw_text(draw, (centre, middle + 40), number, font, anchor="ms")
+    unit = ellipsize(t["milestone_unit"], fonts.big_unit, max_width)
+    draw_text(draw, (centre, middle + 86), unit, fonts.big_unit, anchor="ms")

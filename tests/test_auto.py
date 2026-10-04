@@ -11,6 +11,7 @@ from studylife_display.layouts.auto import (
     DEFAULT_RULES,
     EXAM_SOON_DAYS,
     AutoRules,
+    next_in_cycle,
     resolve_layout,
     rules_from_settings,
 )
@@ -36,8 +37,9 @@ def data(sample: Any, fixed_now: datetime, tz: ZoneInfo) -> DashboardData:
 
 @pytest.fixture
 def quiet(data: DashboardData) -> DashboardData:
-    """Nothing going on: no timer, no goal, no session ahead - `classic` territory."""
-    return replace(data, timer=None, next_goal=None, agenda=())
+    """Nothing going on: no timer, no goal, no session ahead today or tomorrow - `classic`
+    territory."""
+    return replace(data, timer=None, next_goal=None, agenda=(), tomorrow=())
 
 
 def with_goal(data: DashboardData, days_left: int) -> DashboardData:
@@ -193,3 +195,94 @@ class TestConcreteKeys:
     def test_unknown_key_raises(self, data: DashboardData) -> None:
         with pytest.raises(ValueError):
             resolve_layout("holographic", data)
+
+
+class TestQuietAndTomorrowRules:
+    def test_quiet_inside_its_window(self, quiet: DashboardData) -> None:
+        rules = AutoRules(quiet_window="22-23")
+        late = at(quiet, quiet.now.replace(hour=22, minute=30))
+        assert resolve_layout("auto", late, rules) == "quiet"
+        assert resolve_layout("auto", at(quiet, quiet.now.replace(hour=21, minute=59)), rules) == (
+            "classic"
+        )
+        # Off by default.
+        assert resolve_layout("auto", late) == "classic"
+
+    def test_tomorrow_in_the_evening_while_tomorrow_has_sessions(
+        self, quiet: DashboardData, data: DashboardData
+    ) -> None:
+        assert data.tomorrow  # the sample plans three sessions for tomorrow
+        planned_tomorrow = replace(quiet, tomorrow=data.tomorrow)
+        evening = at(planned_tomorrow, quiet.now.replace(hour=19, minute=0))
+        assert resolve_layout("auto", evening) == "tomorrow"
+        assert resolve_layout("auto", at(planned_tomorrow, quiet.now.replace(hour=17))) == "classic"
+        assert resolve_layout("auto", at(quiet, quiet.now.replace(hour=19))) == "classic"
+        assert resolve_layout("auto", evening, AutoRules(tomorrow_window="")) == "classic"
+
+    def test_focus_and_exam_beat_the_evening_rules(self, data: DashboardData) -> None:
+        rules = AutoRules(quiet_window="22-23")
+        late = at(data, data.now.replace(hour=22, minute=30))
+        assert late.timer is not None and late.timer.is_running
+        assert resolve_layout("auto", late, rules) == "focus"
+        assert resolve_layout("auto", with_goal(late, 2), rules) == "exam"
+        # Without the timer the quiet window wins over tomorrow's plan.
+        assert resolve_layout("auto", replace(late, timer=None), rules) == "quiet"
+
+    def test_quiet_beats_the_agenda_but_the_agenda_beats_tomorrow(
+        self, quiet: DashboardData, data: DashboardData
+    ) -> None:
+        rules = AutoRules(quiet_window="06-07", agenda_window="06-12", tomorrow_window="06-12")
+        morning = planned(
+            replace(quiet, tomorrow=data.tomorrow),
+            timedelta(hours=1),
+            timedelta(hours=1),
+        )
+        assert resolve_layout("auto", at(morning, morning.now.replace(hour=6)), rules) == "quiet"
+        assert resolve_layout("auto", at(morning, morning.now.replace(hour=8)), rules) == "agenda"
+
+
+class TestCycle:
+    def test_steps_through_the_default_list(self, data: DashboardData) -> None:
+        assert DEFAULT_RULES.cycle == ("classic", "week", "agenda", "review")
+        assert resolve_layout("cycle", data) == "classic"
+        assert resolve_layout("cycle", data, previous="classic") == "week"
+        assert resolve_layout("cycle", data, previous="agenda") == "review"
+        # Wraps around, and restarts when the last frame was not part of the list.
+        assert resolve_layout("cycle", data, previous="review") == "classic"
+        assert resolve_layout("cycle", data, previous="focus") == "classic"
+
+    def test_custom_list_and_helper(self) -> None:
+        rules = AutoRules(cycle=("year", "month"))
+        assert next_in_cycle(rules.cycle, None) == "year"
+        assert next_in_cycle(rules.cycle, "year") == "month"
+        assert next_in_cycle(rules.cycle, "month") == "year"
+        assert next_in_cycle((), "year") == "classic"
+
+    def test_a_concrete_choice_ignores_the_previous_frame(self, data: DashboardData) -> None:
+        assert resolve_layout("week", data, previous="classic") == "week"
+
+    def test_rules_from_settings_reads_the_new_fields(self) -> None:
+        settings = Settings(
+            studylife_base_url="https://studylife.test",  # type: ignore[arg-type]
+            display_auto_tomorrow="19-22",
+            display_auto_quiet="22-23",
+            display_cycle="year, month ,today",
+        )
+        rules = rules_from_settings(settings)
+        assert rules.tomorrow_window == "19-22"
+        assert rules.quiet_window == "22-23"
+        assert rules.cycle == ("year", "month", "today")
+
+    def test_settings_reject_unknown_or_pseudo_cycle_entries(self) -> None:
+        for bad in ("classic,holographic", "auto,classic", "", "week,week"):
+            with pytest.raises(ValueError):
+                Settings(
+                    studylife_base_url="https://studylife.test",  # type: ignore[arg-type]
+                    display_cycle=bad,
+                )
+        for bad in ("classic", "classic,week,month", "duo,classic", "focus,focus"):
+            with pytest.raises(ValueError):
+                Settings(
+                    studylife_base_url="https://studylife.test",  # type: ignore[arg-type]
+                    display_duo=bad,
+                )

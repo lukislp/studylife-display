@@ -23,6 +23,7 @@ from studylife_display.layouts.common import (
     format_streak,
     load_fonts,
     new_canvas,
+    text_width,
 )
 from studylife_display.model import HEATMAP_COLUMNS, DashboardData
 
@@ -95,3 +96,41 @@ def render(data: DashboardData, language: str) -> Image.Image:
     )
     draw_footer_line(draw, footer, fonts, FOOTER_RULE_Y)
     return finish(canvas)
+
+
+def render_pane(
+    image: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    data: DashboardData,
+    fonts: Fonts,
+    language: str,
+    box: tuple[int, int, int, int],
+) -> None:
+    """The quota label, bar and value line at the top; the 4-week heatmap with the weekly
+    sums to its right underneath."""
+    from studylife_display.layouts.common import draw_quota_bar
+
+    t = TEXT[language]
+    left, top, right, _ = box
+    quota = data.week_quota
+    cell, gap = 30, 5
+
+    draw_text(draw, (left, top + 18), t["quota_label"], fonts.label)
+    draw_quota_bar(draw, quota, left, top + 28, right, 24, tick_overhang=5)
+    value = t["quota_value"].format(
+        hours=format_decimal(quota.hours, t["decimal"]),
+        minimum=format_decimal(quota.target_min, t["decimal"]),
+        maximum=format_decimal(quota.target_max, t["decimal"]),
+    )
+    percent = t["quota_percent"].format(percent=int(round(quota.percent)))
+    value_width = right - left - 12 - text_width(percent, fonts.body)
+    draw_text(draw, (left, top + 86), ellipsize(value, fonts.small, value_width), fonts.small)
+    draw_text(draw, (right, top + 86), percent, fonts.body, anchor="rs")
+
+    grid_top = top + 128
+    draw_heatmap_grid(image, data, t, left, grid_top, cell, gap, fonts.small)
+    sums_x = left + HEATMAP_COLUMNS * (cell + gap) + 12
+    for row_index, row in enumerate(data.heatmap):
+        baseline = grid_top + row_index * (cell + gap) + cell - 8
+        total = t["week_sum"].format(hours=format_decimal(sum(row), t["decimal"]))
+        draw_text(draw, (sums_x, baseline), total, fonts.small)

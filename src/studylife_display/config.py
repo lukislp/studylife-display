@@ -13,8 +13,12 @@ MIN_TOKEN_LENGTH = 12
 
 ROTATIONS = (0, 180)
 LANGUAGES = ("de", "en")
+# Every value the layout choice may take: the two pseudo choices ("auto" picks per refresh,
+# "cycle" cycles through DISPLAY_CYCLE) plus every key of studylife_display.layouts.
+# Kept as a literal tuple (pydantic needs a Literal); tests pin it to the registry.
 LAYOUT_CHOICES = (
     "auto",
+    "cycle",
     "classic",
     "focus",
     "exam",
@@ -24,11 +28,26 @@ LAYOUT_CHOICES = (
     "review",
     "courses",
     "milestone",
+    "month",
+    "exams",
+    "year",
+    "balance",
+    "timer",
+    "tomorrow",
+    "today",
+    "goals",
+    "achievements",
+    "note",
+    "quiet",
+    "duo",
 )
+# The real layouts (what `cycle` may step through and what a duo half may show).
+CONCRETE_LAYOUTS = tuple(key for key in LAYOUT_CHOICES if key not in ("auto", "cycle", "duo"))
 
 Language = Literal["de", "en"]
 LayoutChoice = Literal[
     "auto",
+    "cycle",
     "classic",
     "focus",
     "exam",
@@ -38,7 +57,22 @@ LayoutChoice = Literal[
     "review",
     "courses",
     "milestone",
+    "month",
+    "exams",
+    "year",
+    "balance",
+    "timer",
+    "tomorrow",
+    "today",
+    "goals",
+    "achievements",
+    "note",
+    "quiet",
+    "duo",
 ]
+
+DEFAULT_CYCLE = "classic,week,agenda,review"
+DEFAULT_DUO = "focus,agenda"
 
 
 # The validators are plain functions so that the environment settings below and the
@@ -65,6 +99,36 @@ def check_clear_at(value: str) -> str:
 def check_auto_window(value: str) -> str:
     parse_rule_window(value)  # raises ValueError with the reason
     return value.strip()
+
+
+def parse_layout_list(value: str, name: str) -> tuple[str, ...]:
+    """`classic,week` -> ("classic", "week"): concrete layout keys, each at most once. The
+    pseudo choices (auto, cycle, duo) are not allowed inside a list."""
+    keys = tuple(part.strip() for part in value.split(",") if part.strip())
+    unknown = [key for key in keys if key not in CONCRETE_LAYOUTS]
+    if unknown:
+        raise ValueError(
+            f"{name}: unknown layout(s) {', '.join(unknown)} (known: {', '.join(CONCRETE_LAYOUTS)})"
+        )
+    if len(set(keys)) != len(keys):
+        raise ValueError(f"{name}: a layout is listed twice")
+    return keys
+
+
+def check_cycle(value: str) -> str:
+    """DISPLAY_CYCLE: at least one concrete layout, comma-separated; normalised."""
+    keys = parse_layout_list(value, "DISPLAY_CYCLE")
+    if not keys:
+        raise ValueError("DISPLAY_CYCLE must name at least one layout")
+    return ",".join(keys)
+
+
+def check_duo(value: str) -> str:
+    """DISPLAY_DUO: exactly two different concrete layouts, left then right; normalised."""
+    keys = parse_layout_list(value, "DISPLAY_DUO")
+    if len(keys) != 2:
+        raise ValueError("DISPLAY_DUO must name exactly two layouts (left,right)")
+    return ",".join(keys)
 
 
 def check_public_base_url(value: str) -> str:
@@ -169,6 +233,19 @@ class Settings(BaseSettings):
     # off. The review rule comes first of all, the agenda rule last before classic.
     display_auto_review: str = "sun 18-24"
     display_auto_agenda: str = "06-12"
+    # Two more windows: `tomorrow` in the evening while tomorrow has sessions planned, and
+    # `quiet` (the minimal night screen) - meant for the hour before the quiet hours start,
+    # so that the frame that stays on all night is the calm one. Off by default.
+    display_auto_tomorrow: str = "18-23"
+    display_auto_quiet: str = ""
+
+    # The "cycle" choice steps through these layouts, one per refresh, in this order
+    # (comma-separated concrete layout keys; see check_cycle).
+    display_cycle: str = DEFAULT_CYCLE
+
+    # The "duo" layout shows two layouts side by side, each in its compact pane form:
+    # `left,right` (two different concrete layout keys; see check_duo).
+    display_duo: str = DEFAULT_DUO
 
     # A second copy of settings.json on the boot partition, which stays writable by root
     # even when Raspberry Pi OS's overlay filesystem turns the rest of the SD card (the state
@@ -240,10 +317,25 @@ class Settings(BaseSettings):
     def _clear_at(cls, value: str) -> str:
         return check_clear_at(value)
 
-    @field_validator("display_auto_review", "display_auto_agenda")
+    @field_validator(
+        "display_auto_review",
+        "display_auto_agenda",
+        "display_auto_tomorrow",
+        "display_auto_quiet",
+    )
     @classmethod
     def _auto_window(cls, value: str) -> str:
         return check_auto_window(value)
+
+    @field_validator("display_cycle")
+    @classmethod
+    def _cycle(cls, value: str) -> str:
+        return check_cycle(value)
+
+    @field_validator("display_duo")
+    @classmethod
+    def _duo(cls, value: str) -> str:
+        return check_duo(value)
 
     @field_validator("display_public_base_url")
     @classmethod
@@ -271,11 +363,25 @@ class WebOverrides(BaseModel):
     update_check: bool | None = None
     auto_review: str | None = None
     auto_agenda: str | None = None
+    auto_tomorrow: str | None = None
+    auto_quiet: str | None = None
+    cycle: str | None = None
+    duo: str | None = None
 
     @field_validator("rotate")
     @classmethod
     def _rotation(cls, value: int | None) -> int | None:
         return None if value is None else check_rotation(value)
+
+    @field_validator("cycle")
+    @classmethod
+    def _cycle(cls, value: str | None) -> str | None:
+        return None if value is None else check_cycle(value)
+
+    @field_validator("duo")
+    @classmethod
+    def _duo(cls, value: str | None) -> str | None:
+        return None if value is None else check_duo(value)
 
     @field_validator("quiet_hours")
     @classmethod
@@ -287,7 +393,7 @@ class WebOverrides(BaseModel):
     def _clear_at(cls, value: str | None) -> str | None:
         return None if value is None else check_clear_at(value)
 
-    @field_validator("auto_review", "auto_agenda")
+    @field_validator("auto_review", "auto_agenda", "auto_tomorrow", "auto_quiet")
     @classmethod
     def _auto_window(cls, value: str | None) -> str | None:
         return None if value is None else check_auto_window(value)
@@ -307,6 +413,10 @@ OVERRIDE_FIELDS: dict[str, str] = {
     "update_check": "display_update_check",
     "auto_review": "display_auto_review",
     "auto_agenda": "display_auto_agenda",
+    "auto_tomorrow": "display_auto_tomorrow",
+    "auto_quiet": "display_auto_quiet",
+    "cycle": "display_cycle",
+    "duo": "display_duo",
 }
 
 # The environment-only values the settings page (and /api/settings) list, and whether the
