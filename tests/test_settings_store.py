@@ -9,8 +9,10 @@ from studylife_display.settings_store import (
     effective_settings,
     is_valid_choice,
     load_layout_choice,
+    override_sources,
     save_layout_choice,
     settings_path,
+    update_overrides,
     valid_choices,
 )
 
@@ -111,3 +113,33 @@ def test_corrupt_file_falls_back_to_the_env_default_with_a_warning(
     with caplog.at_level(logging.WARNING, logger="studylife_display.settings_store"):
         assert load_layout_choice(settings) == "week"
     assert any("DISPLAY_LAYOUT=week" in record.getMessage() for record in caplog.records)
+
+
+class TestRecapMinutesOverride:
+    def test_round_trip_and_precedence(self, settings: Settings) -> None:
+        assert effective_settings(settings).display_auto_recap_minutes == 10
+        update_overrides(settings, auto_recap_minutes=25)
+        assert json.loads(settings_path(settings).read_text(encoding="utf-8")) == {
+            "auto_recap_minutes": 25
+        }
+        assert effective_settings(settings).display_auto_recap_minutes == 25
+        assert override_sources(settings)["auto_recap_minutes"] is True
+        update_overrides(settings, auto_recap_minutes=0)  # 0 = off is a value, not "unset"
+        assert effective_settings(settings).display_auto_recap_minutes == 0
+        update_overrides(settings, auto_recap_minutes=None)
+        assert effective_settings(settings).display_auto_recap_minutes == 10
+        assert override_sources(settings)["auto_recap_minutes"] is False
+
+    @pytest.mark.parametrize("bad", [-1, 241, "10", 2.5, True])
+    def test_invalid_values_are_rejected_and_nothing_is_written(
+        self, settings: Settings, bad: object
+    ) -> None:
+        with pytest.raises(ValueError):
+            update_overrides(settings, auto_recap_minutes=bad)
+        assert not settings_path(settings).exists()
+
+    def test_a_damaged_file_is_ignored(self, settings: Settings) -> None:
+        path = settings_path(settings)
+        path.parent.mkdir(parents=True)
+        path.write_text('{"auto_recap_minutes": "soon"}', encoding="utf-8")
+        assert effective_settings(settings).display_auto_recap_minutes == 10

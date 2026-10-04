@@ -96,7 +96,7 @@ USED_FIELDS: dict[str, frozenset[str]] = {
             "weeklyReport.sessionCount",
         }
     ),
-    "history": frozenset({"[].startTime", "[].endTime", "[].courseName"}),
+    "history": frozenset({"[].startTime", "[].endTime", "[].courseName", "[].topic"}),
     "timer": frozenset({"isRunning", "isBreak", "phaseEndsAt", "currentRound"}),
     "sessions": frozenset(
         {"[].startTime", "[].endTime", "[].courseName", "[].topic", "[].isCompleted"}
@@ -214,6 +214,22 @@ class AgendaItem:
     is_completed: bool
     # The wall clock is inside [start, end) right now.
     is_running_now: bool
+
+
+@dataclass(frozen=True)
+class FinishedSession:
+    """The newest session of the history that has already ended (the recap layout)."""
+
+    start: datetime
+    end: datetime
+    course_name: str
+    topic: str | None
+    # Whole minutes since `end`, as of `DashboardData.now`.
+    minutes_ago: int
+
+    @property
+    def hours(self) -> float:
+        return (self.end - self.start).total_seconds() / 3600
 
 
 @dataclass(frozen=True)
@@ -373,6 +389,14 @@ class DashboardData:
     achievements: Achievements = Achievements(0, 0, ())
     notes: tuple[Note, ...] = ()
     unavailable: frozenset[str] = frozenset()
+    # -- added with the recap and calendar layouts --
+    # The history session with the latest end that is not after `now` (None without one).
+    last_session: FinishedSession | None = None
+    # Every session (planned and completed) starting in the current Monday-to-Sunday week,
+    # sorted by start (the "calendar" layout), and the upcoming course goals whose date falls
+    # into that week as (weekday index with 0 = Monday, course name).
+    week_calendar: tuple[AgendaItem, ...] = ()
+    week_goal_days: tuple[tuple[int, str], ...] = ()
 
     @property
     def next_agenda_item(self) -> AgendaItem | None:
@@ -626,6 +650,25 @@ def days_in_month(day: date) -> int:
     return (first_next - day.replace(day=1)).days
 
 
+def _agenda_item(session: dict[str, Any], now: datetime, tz: ZoneInfo) -> AgendaItem | None:
+    """One `GET /api/sessions` entry as an AgendaItem; None without a usable start or end
+    (or when it ends before it starts)."""
+    start = parse_optional(session.get("startTime"), tz)
+    end = parse_optional(session.get("endTime"), tz)
+    if start is None or end is None or end <= start:
+        return None
+    name = session.get("courseName")
+    topic = session.get("topic")
+    return AgendaItem(
+        start=start,
+        end=end,
+        course_name=str(name) if name else "",
+        topic=str(topic) if topic else None,
+        is_completed=bool(session.get("isCompleted")),
+        is_running_now=start <= now < end,
+    )
+
+
 def agenda_items(
     sessions: list[dict[str, Any]], now: datetime, tz: ZoneInfo, day_offset: int = 0
 ) -> list[AgendaItem]:
@@ -633,26 +676,72 @@ def agenda_items(
     sorted by start. A session without a usable start or end (or that ends before it
     starts) is skipped."""
     day = local_day(now, tz) + timedelta(days=day_offset)
-    items: list[AgendaItem] = []
-    for session in sessions:
+    items = [
+        item
+        for session in sessions
+        if (item := _agenda_item(session, now, tz)) is not None and local_day(item.start, tz) == day
+    ]
+    items.sort(key=lambda item: (item.start, item.end))
+    return items
+
+
+def week_agenda_items(
+    sessions: list[dict[str, Any]], now: datetime, tz: ZoneInfo
+) -> list[AgendaItem]:
+    """Every session (planned or completed) that starts in the Monday-to-Sunday week of
+    `now`, sorted by start."""
+    monday = local_day(now, tz) - timedelta(days=local_day(now, tz).weekday())
+    sunday = monday + timedelta(days=6)
+    items = [
+        item
+        for session in sessions
+        if (item := _agenda_item(session, now, tz)) is not None
+        and monday <= local_day(item.start, tz) <= sunday
+    ]
+    items.sort(key=lambda item: (item.start, item.end))
+    return items
+
+
+def week_goal_days(
+    goals: tuple[NextGoal, ...], now: datetime, tz: ZoneInfo
+) -> tuple[tuple[int, str], ...]:
+    """(weekday index, course name) of every goal dated inside the week of `now`, in date
+    order."""
+    today = local_day(now, tz)
+    monday = today - timedelta(days=today.weekday())
+    inside = [
+        goal
+        for goal in goals
+        if goal.target_date is not None and 0 <= (goal.target_date - monday).days <= 6
+    ]
+    inside.sort(key=lambda goal: (goal.target_date or monday, goal.course_name))
+    return tuple(
+        (goal.target_date.weekday(), goal.course_name) for goal in inside if goal.target_date
+    )
+
+
+def last_finished_session(
+    history: list[dict[str, Any]], now: datetime, tz: ZoneInfo
+) -> FinishedSession | None:
+    """The history session with the latest end that is not after `now`."""
+    best: FinishedSession | None = None
+    for session in history:
         start = parse_optional(session.get("startTime"), tz)
         end = parse_optional(session.get("endTime"), tz)
-        if start is None or end is None or end <= start or local_day(start, tz) != day:
+        if start is None or end is None or end <= start or end > now:
+            continue
+        if best is not None and end <= best.end:
             continue
         name = session.get("courseName")
         topic = session.get("topic")
-        items.append(
-            AgendaItem(
-                start=start,
-                end=end,
-                course_name=str(name) if name else "",
-                topic=str(topic) if topic else None,
-                is_completed=bool(session.get("isCompleted")),
-                is_running_now=start <= now < end,
-            )
+        best = FinishedSession(
+            start=start,
+            end=end,
+            course_name=str(name) if name else "",
+            topic=str(topic) if topic else None,
+            minutes_ago=int((now.timestamp() - end.timestamp()) // 60),
         )
-    items.sort(key=lambda item: (item.start, item.end))
-    return items
+    return best
 
 
 def _timer(timer: dict[str, Any], tz: ZoneInfo) -> TimerInfo | None:
@@ -844,4 +933,7 @@ def build_dashboard(
         achievements=achievements(achievements_payload or {}),
         notes=notes(notes_payload or [], tz),
         unavailable=frozenset(unavailable) & frozenset(OPTIONAL_PAYLOADS),
+        last_session=last_finished_session(history, now, tz),
+        week_calendar=tuple(week_agenda_items(sessions or [], now, tz)),
+        week_goal_days=week_goal_days(upcoming, now, tz),
     )

@@ -897,8 +897,11 @@ class TestSettingsPage:
         assert b"<option value='de' selected>" in body
         assert b"<option value='0' selected>" in body
         assert b"value='04:00'" in body
-        # language, rotate, quiet_hours, clear_at, four auto windows, update_check
-        assert body.count(b"aus Umgebung/Standard") == 9
+        # language, rotate, quiet_hours, clear_at, four auto windows, recap minutes,
+        # update_check
+        assert body.count(b"aus Umgebung/Standard") == 10
+        assert b"name='auto_recap_minutes' type='number'" in body
+        assert b"value='10'" in body
         assert b"studylife-display.timer" in body
         assert b"STUDYLIFE_BASE_URL" in body and BASE_URL.encode() in body
         assert b"STUDYLIFE_API_KEY" in body and b"gesetzt" in body
@@ -921,6 +924,7 @@ class TestSettingsPage:
             "auto_agenda": "",
             "auto_tomorrow": "19-22",
             "auto_quiet": "22-23",
+            "auto_recap_minutes": "25",
         }
         status, headers, _ = client.request("POST", "/settings", form, headers=client.same_origin())
         assert status == 303
@@ -936,8 +940,10 @@ class TestSettingsPage:
             "auto_agenda": "",
             "auto_tomorrow": "19-22",
             "auto_quiet": "22-23",
+            "auto_recap_minutes": 25,
         }
         effective = effective_settings(settings)
+        assert effective.display_auto_recap_minutes == 25
         assert effective.display_language == "en"
         assert effective.display_auto_tomorrow == "19-22"
         assert effective.display_auto_quiet == "22-23"
@@ -950,7 +956,8 @@ class TestSettingsPage:
         assert settings.display_language == "de"  # the environment object is untouched
         _, _, body = client.request("GET", "/settings?m=saved")
         assert b"Settings saved." in body
-        assert body.count(b"from settings.json") == 9
+        assert body.count(b"from settings.json") == 10
+        assert b"value='25'" in body
         assert b"value='sat,sun 19-23'" in body
         assert b"<option value='180' selected>" in body
         _, _, body = client.request("GET", "/")
@@ -980,18 +987,40 @@ class TestSettingsPage:
             "clear_at": "25:00",
             "auto_review": "sun 23-7",
             "auto_agenda": "06-12",
+            "auto_recap_minutes": "lots",
         }
         status, _, body = client.request("POST", "/settings", form, headers=client.same_origin())
         assert status == 400
         text = body.decode()
         assert "Bitte die markierten Felder korrigieren" in text
-        assert text.count("class='error'") == 4
+        assert text.count("class='error'") == 5
+        assert "muss eine ganze Zahl von 0 bis 240 sein, nicht &#x27;lots&#x27;" in text
         assert "value='night'" in text and "value='25:00'" in text  # what was typed stays
         assert "value='sun 23-7'" in text
         assert not (Path(settings.display_state_path).parent / "settings.json").exists()
         form["rotate"] = "upside-down"
         status, _, _ = client.request("POST", "/settings", form, headers=client.same_origin())
         assert status == 400
+        # The recap minutes: out of range is rejected as well, 0 is fine.
+        valid = {"language": "de", "rotate": "0", "quiet_hours": "", "clear_at": ""}
+        for bad in ("241", "-1", "1.5"):
+            status, _, _ = client.request(
+                "POST",
+                "/settings",
+                {**valid, "auto_recap_minutes": bad},
+                headers=client.same_origin(),
+            )
+            assert status == 400, bad
+        assert not (Path(settings.display_state_path).parent / "settings.json").exists()
+        status, _, _ = client.request(
+            "POST",
+            "/settings",
+            {**valid, "auto_recap_minutes": "0"},
+            headers=client.same_origin(),
+        )
+        assert status == 303
+        settings_file = Path(settings.display_state_path).parent / "settings.json"
+        assert json.loads(settings_file.read_text(encoding="utf-8"))["auto_recap_minutes"] == 0
 
     def test_run_honours_a_rotation_changed_in_the_web_interface(
         self,

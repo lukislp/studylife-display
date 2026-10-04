@@ -22,6 +22,7 @@ def test_defaults(env: None) -> None:
     assert settings.display_update_check is False
     assert settings.display_auto_review == "sun 18-24"
     assert settings.display_auto_agenda == "06-12"
+    assert settings.display_auto_recap_minutes == 10
 
 
 @pytest.mark.parametrize("value", ["0", "180"])
@@ -104,3 +105,20 @@ def test_auto_windows_reject_garbage(
 def test_update_check_opt_in(env: None, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DISPLAY_UPDATE_CHECK", "true")
     assert Settings().display_update_check is True  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("value", ["0", "10", "240"])
+def test_recap_minutes_accept_zero_to_240(
+    env: None, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("DISPLAY_AUTO_RECAP_MINUTES", value)
+    assert Settings().display_auto_recap_minutes == int(value)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("value", ["-1", "241", "ten", "2.5", ""])
+def test_recap_minutes_reject_everything_else(
+    env: None, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("DISPLAY_AUTO_RECAP_MINUTES", value)
+    with pytest.raises(ValidationError):
+        Settings()  # type: ignore[call-arg]

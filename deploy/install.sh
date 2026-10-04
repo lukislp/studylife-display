@@ -269,6 +269,11 @@ else
   fi
 fi
 
+echo "==> mDNS advertisement (lets Home Assistant discover the display)"
+# One DNS-SD service next to the <hostname>.local name avahi already answers; skipped with a
+# log line when avahi is not installed, and never a reason to fail the install.
+bash "$SRC/deploy/avahi-service.sh" || echo "    note: the mDNS advertisement could not be written"
+
 echo "==> systemd units"
 install -m 0644 "$SRC/deploy/studylife-display.service" /etc/systemd/system/
 install -m 0644 "$SRC/deploy/studylife-display.timer" /etc/systemd/system/

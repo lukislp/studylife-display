@@ -17,6 +17,7 @@ from studylife_display.layouts import (
     achievements,
     agenda,
     balance,
+    calendar,
     classic,
     courses,
     degree,
@@ -28,6 +29,7 @@ from studylife_display.layouts import (
     month,
     note,
     quiet,
+    recap,
     review,
     timer,
     today,
@@ -71,6 +73,8 @@ PANES: dict[str, Pane] = {
     "achievements": achievements.render_pane,
     "note": note.render_pane,
     "quiet": quiet.render_pane,
+    "recap": recap.render_pane,
+    "calendar": calendar.render_pane,
 }
 
 

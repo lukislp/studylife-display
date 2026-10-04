@@ -65,6 +65,7 @@ SETTINGS_KEYS = frozenset(
         "auto_agenda",
         "auto_tomorrow",
         "auto_quiet",
+        "auto_recap_minutes",
         "duo",
     }
 )
@@ -211,6 +212,7 @@ def _settings_get(app: WebApp) -> dict[str, Any]:
         "auto_agenda": settings.display_auto_agenda,
         "auto_tomorrow": settings.display_auto_tomorrow,
         "auto_quiet": settings.display_auto_quiet,
+        "auto_recap_minutes": settings.display_auto_recap_minutes,
         "duo": settings.display_duo,
     }
     readonly = {
