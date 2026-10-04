@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from studylife_display.auto_rules import in_rule_window
+from studylife_display.config import canonical_layout
 from studylife_display.layouts import AUTO, LAYOUTS
 from studylife_display.layouts.milestone import is_milestone
 from studylife_display.model import DashboardData
@@ -71,11 +72,13 @@ def rules_from_settings(settings: Settings) -> AutoRules:
 
 def resolve_layout(choice: str, data: DashboardData, rules: AutoRules = DEFAULT_RULES) -> str:
     """ "auto" -> the first rule above that applies. A concrete layout key is returned
-    unchanged; anything else raises ValueError."""
+    unchanged, a legacy alias as its current key (`semester` -> `degree`); anything else
+    raises ValueError."""
     if choice != AUTO:
-        if choice not in LAYOUTS:
+        key = canonical_layout(choice)
+        if key not in LAYOUTS:
             raise ValueError(f"unknown layout {choice!r}")
-        return choice
+        return key
     if in_rule_window(data.now, rules.review_window):
         return "review"
     if is_milestone(data.streak_days):

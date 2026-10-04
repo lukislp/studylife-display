@@ -324,7 +324,7 @@ class DashboardData:
     week_quota: WeekQuota
     timer: TimerInfo | None
     program_name: str | None
-    # The semester figures (the "semester" layout): ECTS, average grade (None without a
+    # The degree figures (the "degree" layout): ECTS, average grade (None without a
     # graded course), graduation forecast, the neglected course (None when the server's
     # gate is not met) and topic progress.
     ects: Ects

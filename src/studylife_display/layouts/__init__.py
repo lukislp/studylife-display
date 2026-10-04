@@ -24,6 +24,7 @@ from studylife_display.layouts import (
     balance,
     classic,
     courses,
+    degree,
     duo,
     exam,
     exams,
@@ -34,7 +35,6 @@ from studylife_display.layouts import (
     note,
     quiet,
     review,
-    semester,
     timer,
     today,
     tomorrow,
@@ -133,19 +133,19 @@ LAYOUTS: dict[str, LayoutSpec] = {
             render=week.render,
         ),
         LayoutSpec(
-            key="semester",
-            name={"de": "Semester", "en": "Semester"},
+            key="degree",
+            name={"de": "Studienstand", "en": "Degree progress"},
             description={
                 "de": (
-                    "ECTS mit Fortschrittsbalken, Notenschnitt, Abschlussprognose, "
+                    "ECTS von allen mit Fortschrittsbalken, Notenschnitt, Abschlussprognose, "
                     "vernachlässigter Kurs und Themen; nie automatisch gewählt."
                 ),
                 "en": (
-                    "ECTS with a progress bar, average grade, graduation forecast, neglected "
-                    "course and topics; never picked automatically."
+                    "ECTS earned of all with a progress bar, average grade, graduation "
+                    "forecast, neglected course and topics; never picked automatically."
                 ),
             },
-            render=semester.render,
+            render=degree.render,
         ),
         LayoutSpec(
             key="agenda",

@@ -22,7 +22,7 @@ LAYOUT_CHOICES = (
     "focus",
     "exam",
     "week",
-    "semester",
+    "degree",
     "agenda",
     "review",
     "courses",
@@ -43,6 +43,27 @@ LAYOUT_CHOICES = (
 # The real layouts (what a duo half may show).
 CONCRETE_LAYOUTS = tuple(key for key in LAYOUT_CHOICES if key not in ("auto", "duo"))
 
+# Layout keys of earlier releases -> the key they are called now. "semester" was renamed to
+# "degree" (the layout shows the whole degree: ECTS of all, average grade, graduation
+# forecast - not a semester). The old key stays accepted wherever a layout key is entered
+# (DISPLAY_LAYOUT, DISPLAY_DUO, settings.json, the web interface, the API, the CLI) so an
+# existing installation keeps working; it is normalised to the new key on the way in and
+# never listed or written back.
+LEGACY_LAYOUT_KEYS: dict[str, str] = {"semester": "degree"}
+
+
+def canonical_layout(key: str) -> str:
+    """The current name of a layout key: a legacy key is mapped, anything else returned
+    unchanged (an unknown key stays unknown and fails the check that follows)."""
+    return LEGACY_LAYOUT_KEYS.get(key, key)
+
+
+def _canonical_layout_value(value: object) -> object:
+    """Before-validator form of canonical_layout: only a string is touched, so a wrong type
+    still fails the Literal check with pydantic's own message."""
+    return canonical_layout(value) if isinstance(value, str) else value
+
+
 Language = Literal["de", "en"]
 LayoutChoice = Literal[
     "auto",
@@ -50,7 +71,7 @@ LayoutChoice = Literal[
     "focus",
     "exam",
     "week",
-    "semester",
+    "degree",
     "agenda",
     "review",
     "courses",
@@ -101,7 +122,7 @@ def check_auto_window(value: str) -> str:
 def parse_layout_list(value: str, name: str) -> tuple[str, ...]:
     """`classic,week` -> ("classic", "week"): concrete layout keys, each at most once. The
     pseudo choice `auto` and the `duo` layout itself are not allowed inside a list."""
-    keys = tuple(part.strip() for part in value.split(",") if part.strip())
+    keys = tuple(canonical_layout(part.strip()) for part in value.split(",") if part.strip())
     unknown = [key for key in keys if key not in CONCRETE_LAYOUTS]
     if unknown:
         raise ValueError(
@@ -212,9 +233,9 @@ class Settings(BaseSettings):
     # Which layout to draw (see studylife_display.layouts). "auto" picks per refresh, in this
     # order: the weekly review inside its window, the exam countdown when one is due within a
     # week, the timer while it runs, the agenda while a session planned for today still lies
-    # ahead (inside its window), classic otherwise ("semester" is never picked
+    # ahead (inside its window), classic otherwise ("degree" is never picked
     # automatically). A settings.json written by the web interface next to the cache
-    # overrides this value.
+    # overrides this value. A legacy key (LEGACY_LAYOUT_KEYS) is accepted and normalised.
     display_layout: LayoutChoice = "auto"
 
     # The two windows of the auto rules: `[weekdays] HH-HH` or `HH:MM-HH:MM` (end may be
@@ -279,6 +300,11 @@ class Settings(BaseSettings):
     display_setup_url: str = ""
 
     http_timeout_seconds: float = 10.0
+
+    @field_validator("display_layout", mode="before")
+    @classmethod
+    def _layout_alias(cls, value: object) -> object:
+        return _canonical_layout_value(value)
 
     @field_validator("display_rotate")
     @classmethod
@@ -346,6 +372,11 @@ class WebOverrides(BaseModel):
     auto_tomorrow: str | None = None
     auto_quiet: str | None = None
     duo: str | None = None
+
+    @field_validator("layout", mode="before")
+    @classmethod
+    def _layout_alias(cls, value: object) -> object:
+        return _canonical_layout_value(value)
 
     @field_validator("rotate")
     @classmethod

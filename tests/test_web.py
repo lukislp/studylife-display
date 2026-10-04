@@ -210,7 +210,7 @@ class TestPreviews:
             "focus",
             "exam",
             "week",
-            "semester",
+            "degree",
             "agenda",
             "review",
             "courses",
@@ -225,6 +225,10 @@ class TestPreviews:
         with Image.open(io.BytesIO(body)) as image:
             assert image.size == (800, 480)
             assert image.format == "PNG"
+
+    def test_the_old_layout_name_still_previews(self, client: Client) -> None:
+        client.login()
+        assert client.request("GET", "/preview/semester.png")[0] == 200
 
     def test_unknown_preview_is_a_404(self, client: Client) -> None:
         client.login()

@@ -7,6 +7,7 @@ import pytest
 from studylife_display.config import CONCRETE_LAYOUTS, LAYOUT_CHOICES, Settings
 from studylife_display.settings_store import (
     effective_settings,
+    is_valid_choice,
     load_layout_choice,
     save_layout_choice,
     settings_path,
@@ -47,6 +48,39 @@ def test_valid_choices_are_the_layouts_plus_the_pseudo_choices() -> None:
     assert valid_choices() == set(LAYOUT_CHOICES)
     assert {"auto", "duo", "classic", "month", "year", "quiet"} <= valid_choices()
     assert set(CONCRETE_LAYOUTS) == valid_choices() - {"auto", "duo"}
+
+
+def test_semester_is_an_alias_of_degree(settings: Settings) -> None:
+    assert is_valid_choice("semester") and is_valid_choice("degree")
+    assert "semester" not in valid_choices()
+    assert (
+        Settings(
+            studylife_base_url="https://studylife.test",  # type: ignore[arg-type]
+            display_layout="semester",  # type: ignore[arg-type]
+            display_duo="semester,agenda",
+        ).display_layout
+        == "degree"
+    )
+    duo = Settings(
+        studylife_base_url="https://studylife.test",  # type: ignore[arg-type]
+        display_duo="semester,agenda",
+    ).display_duo
+    assert duo == "degree,agenda"
+
+
+def test_a_settings_file_with_the_old_name_loads_and_is_rewritten_canonically(
+    settings: Settings,
+) -> None:
+    path = settings_path(settings)
+    path.parent.mkdir(parents=True)
+    path.write_text('{"layout": "semester", "duo": "agenda,semester"}', "utf-8")
+    assert load_layout_choice(settings) == "degree"
+    assert effective_settings(settings).display_duo == "agenda,degree"
+    save_layout_choice(settings, "semester")
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "layout": "degree",
+        "duo": "agenda,semester".replace("semester", "degree"),
+    }
 
 
 def test_a_legacy_cycle_key_is_ignored_not_fatal(settings: Settings) -> None:

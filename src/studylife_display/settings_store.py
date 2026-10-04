@@ -20,6 +20,7 @@ the loader, so a damaged copy on either side is never propagated.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -28,7 +29,13 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from studylife_display.config import OVERRIDE_FIELDS, Settings, WebOverrides
+from studylife_display.config import (
+    OVERRIDE_FIELDS,
+    Settings,
+    WebOverrides,
+    canonical_layout,
+    parse_layout_list,
+)
 from studylife_display.layouts import LAYOUTS, PSEUDO_CHOICES
 
 log = logging.getLogger(__name__)
@@ -44,12 +51,13 @@ class InvalidSettingsFile(ValueError):
 
 
 def valid_choices() -> frozenset[str]:
-    """Every layout key plus the pseudo choice "auto"."""
+    """Every layout key plus the pseudo choice "auto" - the current keys only, no alias."""
     return frozenset(LAYOUTS) | frozenset(PSEUDO_CHOICES)
 
 
 def is_valid_choice(choice: object) -> bool:
-    return isinstance(choice, str) and choice in valid_choices()
+    """A current layout key, "auto", or a legacy alias of one (config.LEGACY_LAYOUT_KEYS)."""
+    return isinstance(choice, str) and canonical_layout(choice) in valid_choices()
 
 
 def settings_path(settings: Settings) -> Path:
@@ -80,6 +88,13 @@ def read_overrides(path: Path) -> WebOverrides | None:
         # A key an earlier release wrote and this one no longer knows: dropped silently
         # rather than failing the whole file (which would throw away every other choice).
         raw.pop(key, None)
+    # Layout keys an earlier release wrote under their old name ("semester" -> "degree"):
+    # mapped before validation so the file keeps working, and gone after the next write.
+    # WebOverrides maps `layout` itself; `duo` is a comma list and is mapped here.
+    if isinstance(raw.get("duo"), str):
+        # An invalid pair is left as it is: the validator below reports it.
+        with contextlib.suppress(ValueError):
+            raw["duo"] = ",".join(parse_layout_list(raw["duo"], "duo"))
     try:
         return WebOverrides.model_validate(raw)
     except ValidationError as exc:
@@ -184,10 +199,11 @@ def load_layout_choice(settings: Settings) -> str:
 
 def save_layout_choice(settings: Settings, choice: str) -> Path:
     """Persists `choice` atomically, keeping the other keys; ValueError for anything but a
-    layout key or "auto"."""
+    layout key, its legacy alias or "auto". A legacy alias is written under its current
+    name (`semester` -> `degree`)."""
     if not is_valid_choice(choice):
         raise ValueError(f"unknown layout {choice!r} (known: {', '.join(sorted(valid_choices()))})")
-    return update_overrides(settings, layout=choice)
+    return update_overrides(settings, layout=canonical_layout(choice))
 
 
 # -- the boot-partition mirror -----------------------------------------------------------
