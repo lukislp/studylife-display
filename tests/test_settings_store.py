@@ -6,6 +6,7 @@ import pytest
 
 from studylife_display.config import CONCRETE_LAYOUTS, LAYOUT_CHOICES, Settings
 from studylife_display.settings_store import (
+    effective_settings,
     load_layout_choice,
     save_layout_choice,
     settings_path,
@@ -46,6 +47,18 @@ def test_valid_choices_are_the_layouts_plus_the_pseudo_choices() -> None:
     assert valid_choices() == set(LAYOUT_CHOICES)
     assert {"auto", "duo", "classic", "month", "year", "quiet"} <= valid_choices()
     assert set(CONCRETE_LAYOUTS) == valid_choices() - {"auto", "duo"}
+
+
+def test_a_legacy_cycle_key_is_ignored_not_fatal(settings: Settings) -> None:
+    # 1.11.0 wrote a "cycle" key; a file from then must still yield its other choices.
+    path = settings_path(settings)
+    path.parent.mkdir(parents=True)
+    path.write_text('{"layout": "month", "cycle": "classic,week", "language": "en"}', "utf-8")
+    assert load_layout_choice(settings) == "month"
+    assert effective_settings(settings).display_language == "en"
+    # The next write drops it for good.
+    save_layout_choice(settings, "week")
+    assert json.loads(path.read_text(encoding="utf-8")) == {"layout": "week", "language": "en"}
 
 
 def test_invalid_key_is_rejected_and_nothing_is_written(settings: Settings) -> None:
