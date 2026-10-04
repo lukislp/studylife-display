@@ -69,7 +69,11 @@ AVAHI_SCRIPT = DEPLOY / "avahi-service.sh"
 
 
 def run_avahi_script(
-    tmp_path: Path, env_text: str | None, version: str = "1.2.3", with_dir: bool = True
+    tmp_path: Path,
+    env_text: str | None,
+    version: str = "1.2.3",
+    with_dir: bool = True,
+    instance: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Runs deploy/avahi-service.sh against a scratch services directory and env file. The
     script is copied with LF line endings first: a Windows checkout may hold it with CRLF,
@@ -95,6 +99,7 @@ def run_avahi_script(
             env_file.as_posix(),
             "--version",
             version,
+            *([] if instance is None else ["--id", instance]),
         ],
         capture_output=True,
         text=True,
@@ -126,12 +131,30 @@ def test_avahi_service_advertises_the_default_install(tmp_path: Path) -> None:
     service = advertised(tmp_path)
     assert (service.findtext("type") or "") == "_studylife-display._tcp"
     assert (service.findtext("port") or "") == "8795"
-    # Exactly the four keys Home Assistant's discovery reads.
+    # Exactly the four keys Home Assistant's discovery reads (no id: none could be computed).
     assert txt_records(service) == {"version": "1.2.3", "tls": "false", "api": "false", "path": "/"}
     # Written as the file avahi reads, not as a scratch file left behind.
     assert sorted(path.name for path in (tmp_path / "services").iterdir()) == [
         "studylife-display.service"
     ]
+
+
+def test_avahi_service_advertises_the_instance_id(tmp_path: Path) -> None:
+    result = run_avahi_script(tmp_path, "", instance="0123456789abcdef")
+    assert result.returncode == 0, result.stderr
+    assert txt_records(advertised(tmp_path)) == {
+        "version": "1.2.3",
+        "tls": "false",
+        "api": "false",
+        "path": "/",
+        "id": "0123456789abcdef",
+    }
+
+
+def test_avahi_service_drops_an_invalid_instance_id(tmp_path: Path) -> None:
+    result = run_avahi_script(tmp_path, "", instance="<bad>&")
+    assert result.returncode == 0, result.stderr
+    assert "id" not in txt_records(advertised(tmp_path))
 
 
 def test_avahi_service_follows_port_tls_and_api_token(tmp_path: Path) -> None:

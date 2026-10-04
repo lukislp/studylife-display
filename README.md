@@ -248,7 +248,7 @@ values (instance URL, key and token as set/not set, time zone, paths, bind addre
 read-only and carries nothing secret) with JSON for an uptime monitor:
 
 ```json
-{"status": "ok", "setup": false, "version": "1.3.0",
+{"status": "ok", "setup": false, "version": "1.3.0", "id": "9f2c4e1ab07d3856",
  "last_fetch_at": "2026-09-17T16:45:00+02:00",
  "last_fetch_ok": true, "stale_minutes": 3, "last_error": null,
  "last_panel_update_at": "2026-09-17T16:45:04+02:00", "layout": "classic",
@@ -261,6 +261,10 @@ read-only and carries nothing secret) with JSON for an uptime monitor:
 | `ok` | 200 | The last fetch succeeded and the snapshot is fresh |
 | `degraded` | 200 | The last fetch failed and the cached dashboard (or the stale screen) is shown, or the snapshot is older than 15 minutes outside quiet hours - the timer is not running |
 | `error` | 503 | The key was rejected, or there is no data at all |
+
+`id` is the display's stable instance id (16 hex characters, present in every status): a hash
+of the Pi's machine id and the MAC of its first physical network interface, so it does not
+change with the IP address or host name. See [Discovery](#discovery).
 
 `last_error` is `null` or `{"kind": "rejected"|"stale"|"no_data"|"transient", "status": 403,
 "message": "...", "at": "..."}`. For **Uptime Kuma**: monitor type *HTTP(s) - Keyword* or
@@ -325,6 +329,16 @@ anyone typing an address:
 | TXT `tls` | `true` when `DISPLAY_TLS` is on, else `false` |
 | TXT `api` | `true` when `DISPLAY_API_TOKEN` is set (the JSON API is on), else `false` - the token itself is never advertised |
 | TXT `path` | `/` |
+| TXT `id` | the stable instance id, the same value `/healthz` and `/api/state` report as `id` (left out if it cannot be computed) |
+
+The `id` is the first 16 hex characters of `sha256("<machine-id>|<mac>")`: `/etc/machine-id`
+combined with the MAC of the first physical interface (`wlan0`, then `eth0`, then the
+alphabetically first other non-virtual one; `sha256("<machine-id>")` alone when there is
+none). It is a hash, never the raw machine id, and it lets Home Assistant recognise the same
+display after its address changed. Mixing in the MAC means a cloned SD card, which copies
+`/etc/machine-id`, still gets a distinct id on every Pi. Without a readable
+`/etc/machine-id` (a dev machine) a random id is generated once and kept in the state
+directory as `instance_id`.
 
 The service file is `/etc/avahi/services/studylife-display.service`, written by
 `deploy/avahi-service.sh`, which `install.sh` and `update.sh` both run: it is regenerated on

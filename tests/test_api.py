@@ -9,6 +9,7 @@ from __future__ import annotations
 import http.client
 import io
 import json
+import re
 import threading
 from collections.abc import Iterator
 from datetime import datetime
@@ -195,6 +196,8 @@ class TestState:
         assert status == 200
         assert body["status"] == "ok"
         assert body["layout"] == "focus"  # the sample's running timer, like test_web.py
+        assert re.fullmatch(r"[0-9a-f]{16}", body["id"])
+        assert client.json("GET", "/api/state")[1]["id"] == body["id"]
         assert body["layout_choice"] == "auto"
 
     def test_state_reflects_the_current_frame_after_a_refresh(
