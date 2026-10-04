@@ -49,6 +49,18 @@ TOPICS_BAR_HEIGHT = 12
 
 FOOTER_RULE_Y = 428
 
+# Pane geometry, relative to the pane box's top edge.
+PANE_ECTS_LABEL_BASELINE = 22
+PANE_ECTS_BASELINE = 112
+PANE_ECTS_BAR_TOP = 128
+PANE_ECTS_BAR_HEIGHT = 16
+PANE_GRADE_LABEL_BASELINE = 190
+PANE_GRADE_VALUE_BASELINE = 220
+PANE_TOPICS_LABEL_BASELINE = 262
+PANE_TOPICS_VALUE_BASELINE = 292
+PANE_TOPICS_BAR_TOP = 304
+PANE_TOPICS_BAR_HEIGHT = 10
+
 
 def _draw_bar(
     draw: ImageDraw.ImageDraw, left: int, top: int, right: int, height: int, fraction: float
@@ -149,3 +161,51 @@ def render(data: DashboardData, language: str) -> Image.Image:
     footer = ellipsize(t["separator"].join(parts), fonts.body, WIDTH - 2 * MARGIN)
     draw_footer_line(draw, footer, fonts, FOOTER_RULE_Y)
     return finish(canvas)
+
+
+def render_pane(
+    image: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    data: DashboardData,
+    fonts: Fonts,
+    language: str,
+    box: tuple[int, int, int, int],
+) -> None:
+    """The ECTS number with its bar, then the average grade and the topic progress as
+    label/value pairs."""
+    t = TEXT[language]
+    left, top, right, _ = box
+    max_width = right - left
+    ects = data.ects
+    draw_text(draw, (left, top + PANE_ECTS_LABEL_BASELINE), t["ects_label"], fonts.label)
+    number = format_decimal(ects.earned, t["decimal"])
+    rest = t["ects_value"].format(earned="", total=format_decimal(ects.total, t["decimal"]))
+    rest = rest.strip()
+    font = fonts.big_narrow
+    if left + text_width(number, font) + 12 + text_width(rest, fonts.big_unit) > right:
+        font = fonts.value
+    end_x = draw_text(draw, (left, top + PANE_ECTS_BASELINE), number, font)
+    draw_text(draw, (end_x + 12, top + PANE_ECTS_BASELINE - 4), rest, fonts.big_unit)
+    fraction = ects.earned / ects.total if ects.total > 0 else 0.0
+    _draw_bar(draw, left, top + PANE_ECTS_BAR_TOP, right, PANE_ECTS_BAR_HEIGHT, fraction)
+    percent = t["ects_percent"].format(percent=int(round(fraction * 100)))
+    draw_text(draw, (right, top + PANE_ECTS_BAR_TOP - 8), percent, fonts.small, anchor="rs")
+
+    draw_text(draw, (left, top + PANE_GRADE_LABEL_BASELINE), t["grade_label"], fonts.label)
+    if data.average_grade is None:
+        grade = t["grade_none"]
+    else:
+        grade = f"{data.average_grade:.1f}".replace(".", t["decimal"])
+    draw_text(draw, (left, top + PANE_GRADE_VALUE_BASELINE), grade, fonts.body)
+
+    topics = data.topics
+    draw_text(draw, (left, top + PANE_TOPICS_LABEL_BASELINE), t["topics_label"], fonts.label)
+    value = t["topics_value"].format(completed=topics.completed, total=topics.total)
+    draw_text(
+        draw,
+        (left, top + PANE_TOPICS_VALUE_BASELINE),
+        ellipsize(value, fonts.body, max_width),
+        fonts.body,
+    )
+    topic_fraction = topics.completed / topics.total if topics.total > 0 else 0.0
+    _draw_bar(draw, left, top + PANE_TOPICS_BAR_TOP, right, PANE_TOPICS_BAR_HEIGHT, topic_fraction)

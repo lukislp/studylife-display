@@ -29,7 +29,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from studylife_display.config import OVERRIDE_FIELDS, Settings, WebOverrides
-from studylife_display.layouts import AUTO, LAYOUTS
+from studylife_display.layouts import LAYOUTS, PSEUDO_CHOICES
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +41,8 @@ class InvalidSettingsFile(ValueError):
 
 
 def valid_choices() -> frozenset[str]:
-    return frozenset(LAYOUTS) | {AUTO}
+    """Every layout key plus the pseudo choices ("auto", "cycle")."""
+    return frozenset(LAYOUTS) | frozenset(PSEUDO_CHOICES)
 
 
 def is_valid_choice(choice: object) -> bool:

@@ -36,6 +36,7 @@ from studylife_display.render import (
     render,
     text_width,
 )
+from studylife_display.sample import sample_extras
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 # Fraction of pixels allowed to differ (FreeType hinting differences between builds).
@@ -48,7 +49,18 @@ GOLDEN_TOLERANCE = 0.03
 @pytest.fixture
 def data(sample: Any, fixed_now: datetime, tz: ZoneInfo) -> DashboardData:
     metrics, history, timer, sessions = sample
-    return build_dashboard(metrics, history, timer, fixed_now, tz, sessions=sessions)
+    goals, achievements, notes = sample_extras(fixed_now, tz)
+    return build_dashboard(
+        metrics,
+        history,
+        timer,
+        fixed_now,
+        tz,
+        sessions=sessions,
+        goals=goals,
+        achievements_payload=achievements,
+        notes_payload=notes,
+    )
 
 
 def black_fraction(image: Image.Image, box: tuple[int, int, int, int]) -> float:
@@ -272,6 +284,18 @@ class TestGoldens:
             ("review", "de"),
             ("courses", "de"),
             ("milestone", "de"),
+            ("month", "de"),
+            ("exams", "de"),
+            ("year", "de"),
+            ("balance", "de"),
+            ("timer", "de"),
+            ("tomorrow", "de"),
+            ("today", "de"),
+            ("goals", "de"),
+            ("achievements", "de"),
+            ("note", "de"),
+            ("quiet", "de"),
+            ("duo", "de"),
         ],
     )
     def test_matches_golden(

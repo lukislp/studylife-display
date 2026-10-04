@@ -54,6 +54,14 @@ GOAL_DATE_BASELINE = 342
 
 FOOTER_RULE_Y = 428
 
+# The pane form: its rows are narrower and tighter than the full frame's (`row_box`).
+PANE_LABEL_BASELINE = 16
+PANE_ROW_TOP = 28
+PANE_ROW_HEIGHT = 44
+PANE_MAX_ROWS = 5
+PANE_TIME_X = 40
+PANE_TITLE_X = PANE_TIME_X + 122
+
 
 def row_box(index: int) -> tuple[int, int, int, int]:
     """The box of agenda row `index` (0-based); the render test looks for majority-black
@@ -170,3 +178,56 @@ def render(data: DashboardData, language: str) -> Image.Image:
         footer = f"{t['quota_label']} {value}"
     draw_footer_line(draw, ellipsize(footer, fonts.body, WIDTH - 2 * MARGIN), fonts, FOOTER_RULE_Y)
     return finish(canvas)
+
+
+def render_pane(
+    image: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    data: DashboardData,
+    fonts: Fonts,
+    language: str,
+    box: tuple[int, int, int, int],
+) -> None:
+    """The label and up to PANE_MAX_ROWS compact rows (mark, time, course), the running or
+    next session inverted as in the full frame; "+N more" for the rest."""
+    t = TEXT[language]
+    left, top, right, _ = box
+    draw_text(draw, (left, top + PANE_LABEL_BASELINE), t["agenda_label"], fonts.label)
+    rows_top = top + PANE_ROW_TOP
+    if not data.agenda:
+        draw_text(draw, (left, rows_top + 31), t["agenda_none"], fonts.body)
+        return
+    next_item = data.next_agenda_item
+    title_x = left + PANE_TITLE_X
+    for index, item in enumerate(data.agenda[:PANE_MAX_ROWS]):
+        row_top = rows_top + index * PANE_ROW_HEIGHT
+        row_bottom = row_top + PANE_ROW_HEIGHT - ROW_GAP
+        inverted = item is next_item
+        colour = BLACK
+        if inverted:
+            draw.rounded_rectangle((left, row_top, right, row_bottom), radius=6, fill=BLACK)
+            colour = WHITE
+        mark_top = row_top + (PANE_ROW_HEIGHT - ROW_GAP - MARK_SIZE) // 2
+        mark = (left + 8, mark_top, left + 8 + MARK_SIZE, mark_top + MARK_SIZE)
+        draw.rectangle(mark, outline=colour, width=2)
+        if item.is_completed:
+            draw.line(
+                [
+                    (mark[0] + 4, mark[1] + 9),
+                    (mark[0] + 8, mark[3] - 5),
+                    (mark[2] - 4, mark[1] + 4),
+                ],
+                fill=colour,
+                width=3,
+            )
+        baseline = row_top + 28
+        time = format_agenda_time(item, data, t)
+        draw_text(draw, (left + PANE_TIME_X, baseline), time, fonts.small, colour)
+        course = ellipsize(
+            item.course_name or t["course_unknown"], fonts.body, right - 12 - title_x
+        )
+        draw_text(draw, (title_x, baseline), course, fonts.body, colour)
+    hidden = len(data.agenda) - PANE_MAX_ROWS
+    if hidden > 0:
+        more = t["agenda_more"].format(count=hidden)
+        draw_text(draw, (left, rows_top + PANE_MAX_ROWS * PANE_ROW_HEIGHT + 16), more, fonts.small)

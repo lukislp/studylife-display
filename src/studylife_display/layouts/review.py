@@ -57,6 +57,17 @@ STRIP_BOX = (MARGIN, STRIP_TOP, MARGIN + 7 * (BAR_WIDTH + BAR_GAP) - BAR_GAP, ST
 
 FOOTER_RULE_Y = 428
 
+# The pane form: label, the hours large, the delta line, then the seven bars.
+PANE_LABEL_BASELINE = 16
+PANE_HOURS_BASELINE = 124
+PANE_UNIT_BASELINE = 146
+PANE_DELTA_BASELINE = 178
+PANE_STRIP_TOP = 200
+PANE_STRIP_BOTTOM = 292
+PANE_BAR_WIDTH = 32
+PANE_BAR_GAP = 10
+PANE_INITIALS_BASELINE = 314
+
 
 def format_week(week_id: str, t: dict[str, str]) -> str:
     """ "2026-W38" -> "KW 38" / "W38"; anything else is shown as it is."""
@@ -192,3 +203,77 @@ def render(data: DashboardData, language: str) -> Image.Image:
     footer = ellipsize(_previous_week_line(data.weekly_report, t), fonts.body, WIDTH - 2 * MARGIN)
     draw_footer_line(draw, footer, fonts, FOOTER_RULE_Y)
     return finish(canvas)
+
+
+def render_pane(
+    image: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    data: DashboardData,
+    fonts: Fonts,
+    language: str,
+    box: tuple[int, int, int, int],
+) -> None:
+    """The week, this week's hours large with the unit, the delta line and
+    the seven days as small bars with their initials."""
+    t = TEXT[language]
+    left, top, right, _ = box
+    width = right - left
+    week = data.this_week
+    # duo.py prints the layout name above the box, so this line carries just the week.
+    title = format_week(week.week_id, t) if week.week_id else t["review_label"]
+    draw_text(
+        draw, (left, top + PANE_LABEL_BASELINE), ellipsize(title, fonts.label, width), fonts.label
+    )
+
+    # The number in big type with the unit beside it when both fit, else narrower, else the
+    # unit drops to small type under the number.
+    number = format_decimal(week.hours, t["decimal"])
+    unit = t["review_unit"]
+    number_font = fonts.big
+    unit_font = fonts.big_unit
+    if text_width(number, fonts.big) + 12 + text_width(unit, fonts.big_unit) > width:
+        number_font = fonts.big_narrow
+        if text_width(number, fonts.big_narrow) + 12 + text_width(unit, fonts.big_unit) > width:
+            unit_font = fonts.small
+    hours_baseline = top + PANE_HOURS_BASELINE
+    end_x = draw_text(draw, (left, hours_baseline), number, number_font)
+    if end_x + 12 + text_width(unit, unit_font) <= right:
+        draw_text(draw, (end_x + 12, hours_baseline - 4), unit, unit_font)
+    else:
+        draw_text(
+            draw, (left, top + PANE_UNIT_BASELINE), ellipsize(unit, fonts.small, width), fonts.small
+        )
+
+    delta_baseline = top + PANE_DELTA_BASELINE
+    text_x = _draw_marker(draw, left, delta_baseline, week.delta_vs_previous_week)
+    delta = ellipsize(format_delta(week.delta_vs_previous_week, t), fonts.body, right - text_x)
+    draw_text(draw, (text_x, delta_baseline), delta, fonts.body)
+
+    initials = t["weekday_initials"].split(",")
+    scale = max(data.week_strip) if data.week_strip else 0.0
+    strip_top = top + PANE_STRIP_TOP
+    strip_bottom = top + PANE_STRIP_BOTTOM
+    height = strip_bottom - strip_top
+    today = data.now.weekday()
+    for weekday, hours in enumerate(data.week_strip):
+        bar_left = left + weekday * (PANE_BAR_WIDTH + PANE_BAR_GAP)
+        centre = bar_left + PANE_BAR_WIDTH / 2
+        draw.line(
+            [(bar_left, strip_bottom), (bar_left + PANE_BAR_WIDTH, strip_bottom)],
+            fill=BLACK,
+            width=4 if weekday == today else 1,
+        )
+        if hours > 0 and scale > 0:
+            bar = max(2, int((height - 22) * hours / scale))
+            draw.rectangle(
+                (bar_left, strip_bottom - bar, bar_left + PANE_BAR_WIDTH, strip_bottom), fill=BLACK
+            )
+            label = format_decimal(hours, t["decimal"])
+            draw_text(draw, (centre, strip_bottom - bar - 6), label, fonts.small, anchor="ms")
+        draw_text(
+            draw,
+            (centre, top + PANE_INITIALS_BASELINE),
+            initials[weekday],
+            fonts.small,
+            anchor="ms",
+        )

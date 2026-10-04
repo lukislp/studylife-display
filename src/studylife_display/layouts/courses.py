@@ -4,6 +4,7 @@ total as a small hero line up top."""
 
 from __future__ import annotations
 
+from PIL import Image as _PilImage
 from PIL import ImageDraw
 from PIL.Image import Image
 
@@ -36,6 +37,15 @@ BAR_RIGHT = WIDTH - MARGIN - 90
 TOP_COURSES = 9
 
 FOOTER_RULE_Y = 428
+
+# Pane geometry, relative to the pane box's top edge.
+PANE_LABEL_BASELINE = 22
+PANE_ROWS_TOP = 40
+PANE_ROW_HEIGHT = 34
+PANE_BAR_HEIGHT = 18
+PANE_NAME_WIDTH = 130
+PANE_VALUE_WIDTH = 60
+PANE_TOP_COURSES = 5
 
 
 def _draw_hero(
@@ -81,3 +91,42 @@ def render(data: DashboardData, language: str) -> Image:
     )
     draw_footer_line(draw, footer, fonts, FOOTER_RULE_Y)
     return finish(canvas)
+
+
+def render_pane(
+    image: _PilImage.Image,
+    draw: ImageDraw.ImageDraw,
+    data: DashboardData,
+    fonts: Fonts,
+    language: str,
+    box: tuple[int, int, int, int],
+) -> None:
+    """The label and the top PANE_TOP_COURSES courses as name, bar and hours, scaled to the
+    box: a narrower name column and a value column at the right edge."""
+    t = TEXT[language]
+    left, top, right, _ = box
+    draw_text(
+        draw,
+        (left, top + PANE_LABEL_BASELINE),
+        ellipsize(t["courses_label"], fonts.label, right - left),
+        fonts.label,
+    )
+    courses = data.course_hours[:PANE_TOP_COURSES]
+    rows_top = top + PANE_ROWS_TOP
+    if not courses:
+        draw_text(draw, (left, rows_top + PANE_ROW_HEIGHT - 8), t["courses_none"], fonts.body)
+        return
+    bar_left = left + PANE_NAME_WIDTH + 10
+    bar_right = right - PANE_VALUE_WIDTH - 10
+    scale = max(hours for _, hours in courses) or 1.0
+    for index, (name, hours) in enumerate(courses):
+        row_top = rows_top + index * PANE_ROW_HEIGHT
+        baseline = row_top + PANE_BAR_HEIGHT - 2
+        label = ellipsize(name or t["course_unknown"], fonts.small, PANE_NAME_WIDTH)
+        draw_text(draw, (left, baseline), label, fonts.small)
+        width = int((bar_right - bar_left) * hours / scale)
+        draw.rectangle(
+            (bar_left, row_top, bar_left + max(width, 2), row_top + PANE_BAR_HEIGHT), fill=BLACK
+        )
+        value = t["hours_short"].format(hours=format_decimal(hours, t["decimal"]))
+        draw_text(draw, (right, baseline), value, fonts.small, anchor="rs")
