@@ -143,3 +143,28 @@ class TestRecapMinutesOverride:
         path.parent.mkdir(parents=True)
         path.write_text('{"auto_recap_minutes": "soon"}', encoding="utf-8")
         assert effective_settings(settings).display_auto_recap_minutes == 10
+
+
+class TestFrameSkippingOverrides:
+    def test_round_trip_and_precedence(self, settings: Settings) -> None:
+        assert effective_settings(settings).display_skip_unchanged is True
+        assert effective_settings(settings).display_redraw_after_minutes == 60
+        update_overrides(settings, skip_unchanged=False, redraw_after_minutes=0)
+        assert json.loads(settings_path(settings).read_text(encoding="utf-8")) == {
+            "skip_unchanged": False,
+            "redraw_after_minutes": 0,
+        }
+        effective = effective_settings(settings)
+        assert effective.display_skip_unchanged is False  # False is a value, not "unset"
+        assert effective.display_redraw_after_minutes == 0
+        assert override_sources(settings)["skip_unchanged"] is True
+        update_overrides(settings, skip_unchanged=None, redraw_after_minutes=None)
+        assert effective_settings(settings).display_skip_unchanged is True
+        assert effective_settings(settings).display_redraw_after_minutes == 60
+        assert override_sources(settings)["redraw_after_minutes"] is False
+
+    @pytest.mark.parametrize("bad", [-1, 1441])
+    def test_out_of_range_minutes_are_refused(self, settings: Settings, bad: int) -> None:
+        with pytest.raises(ValueError):
+            update_overrides(settings, redraw_after_minutes=bad)
+        assert not settings_path(settings).exists()

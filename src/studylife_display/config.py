@@ -415,6 +415,8 @@ class WebOverrides(BaseModel):
     rotate: int | None = None
     quiet_hours: str | None = None
     clear_at: str | None = None
+    skip_unchanged: bool | None = None
+    redraw_after_minutes: int | None = None
     update_check: bool | None = None
     auto_review: str | None = None
     auto_agenda: str | None = None
@@ -453,6 +455,11 @@ class WebOverrides(BaseModel):
     def _auto_window(cls, value: str | None) -> str | None:
         return None if value is None else check_auto_window(value)
 
+    @field_validator("redraw_after_minutes")
+    @classmethod
+    def _redraw_after_minutes(cls, value: int | None) -> int | None:
+        return None if value is None else check_redraw_after_minutes(value)
+
     @field_validator("auto_recap_minutes")
     @classmethod
     def _recap_minutes(cls, value: int | None) -> int | None:
@@ -470,6 +477,8 @@ OVERRIDE_FIELDS: dict[str, str] = {
     "rotate": "display_rotate",
     "quiet_hours": "display_quiet_hours",
     "clear_at": "display_clear_at",
+    "skip_unchanged": "display_skip_unchanged",
+    "redraw_after_minutes": "display_redraw_after_minutes",
     "update_check": "display_update_check",
     "auto_review": "display_auto_review",
     "auto_agenda": "display_auto_agenda",

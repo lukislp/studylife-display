@@ -925,8 +925,10 @@ class TestSettingsPage:
         assert b"<option value='0' selected>" in body
         assert b"value='04:00'" in body
         # language, rotate, quiet_hours, clear_at, four auto windows, recap minutes,
-        # update_check
-        assert body.count(b"aus Umgebung/Standard") == 10
+        # update_check, skip_unchanged, redraw_after_minutes
+        assert body.count(b"aus Umgebung/Standard") == 12
+        assert b"name='skip_unchanged' checked" in body
+        assert b"name='redraw_after_minutes'" in body and b"value='60'" in body
         assert b"name='auto_recap_minutes' type='number'" in body
         assert b"value='10'" in body
         assert b"studylife-display.timer" in body
@@ -1002,6 +1004,65 @@ class TestSettingsPage:
         assert headers["location"] == "/settings?m=reset"
         assert json.loads(settings_file.read_text(encoding="utf-8")) == {"layout": "week"}
         assert effective_settings(settings).display_language == "de"
+
+    def test_frame_skipping_fields_round_trip_and_reset(
+        self, client: Client, settings: Settings
+    ) -> None:
+        client.login()
+        valid = {"language": "de", "rotate": "0", "quiet_hours": "", "clear_at": "04:00"}
+        settings_file = Path(settings.display_state_path).parent / "settings.json"
+        form = {**valid, "redraw_after_minutes": "30"}  # the box is unticked: off
+        status, _, _ = client.request("POST", "/settings", form, headers=client.same_origin())
+        assert status == 303
+        saved = json.loads(settings_file.read_text(encoding="utf-8"))
+        assert saved["skip_unchanged"] is False and saved["redraw_after_minutes"] == 30
+        effective = effective_settings(settings)
+        assert effective.display_skip_unchanged is False
+        assert effective.display_redraw_after_minutes == 30
+        assert settings.display_skip_unchanged is True  # the environment object is untouched
+        _, _, body = client.request("GET", "/settings")
+        assert b"name='skip_unchanged' checked" not in body
+        assert b"value='30'" in body
+
+        form = {**valid, "skip_unchanged": "on", "redraw_after_minutes": "0"}
+        status, _, _ = client.request("POST", "/settings", form, headers=client.same_origin())
+        assert status == 303
+        saved = json.loads(settings_file.read_text(encoding="utf-8"))
+        assert saved["skip_unchanged"] is True and saved["redraw_after_minutes"] == 0
+
+        # A client posting the previous form (neither field) leaves both untouched.
+        status, _, _ = client.request("POST", "/settings", valid, headers=client.same_origin())
+        assert status == 303
+        saved = json.loads(settings_file.read_text(encoding="utf-8"))
+        assert saved["skip_unchanged"] is True and saved["redraw_after_minutes"] == 0
+
+        status, _, _ = client.request("POST", "/settings/reset", {}, headers=client.same_origin())
+        assert status == 303
+        effective = effective_settings(settings)
+        assert effective.display_skip_unchanged is True
+        assert effective.display_redraw_after_minutes == 60
+
+    def test_redraw_after_minutes_is_validated(self, client: Client, settings: Settings) -> None:
+        client.login()
+        valid = {"language": "de", "rotate": "0", "quiet_hours": "", "clear_at": ""}
+        for bad in ("1441", "-1", "1.5", "often"):
+            status, _, body = client.request(
+                "POST",
+                "/settings",
+                {**valid, "redraw_after_minutes": bad},
+                headers=client.same_origin(),
+            )
+            assert status == 400, bad
+            assert "class='error'" in body.decode()
+        assert not (Path(settings.display_state_path).parent / "settings.json").exists()
+        for good in ("0", "1440"):
+            status, _, _ = client.request(
+                "POST",
+                "/settings",
+                {**valid, "redraw_after_minutes": good},
+                headers=client.same_origin(),
+            )
+            assert status == 303, good
 
     def test_validation_errors_are_shown_inline_and_nothing_is_written(
         self, client: Client, settings: Settings
