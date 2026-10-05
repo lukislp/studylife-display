@@ -141,8 +141,14 @@ EOF
   # `pi` extra) lands in TMPDIR/$TMPDIR by default, i.e. /tmp - a tmpfs sized from RAM. On a
   # 512 MB board (Pi 3 A+) that is far smaller than the repo, so the clone fails part-way with
   # "unable to write file" for unrelated files.
+  # The driver extra follows the panel: Inky Impression boards use the `inky` extra (installed
+  # by `install.sh --panel` or by hand), everything else the Waveshare one.
+  local extra=pi
+  if grep -Eq '^DISPLAY_PANEL=inky_' /etc/studylife-display.env 2>/dev/null; then
+    extra=inky
+  fi
   mkdir -p "$PREFIX/tmp"
-  TMPDIR="$PREFIX/tmp" "$VENV/bin/pip" install --upgrade "$SRC[pi]"
+  TMPDIR="$PREFIX/tmp" "$VENV/bin/pip" install --upgrade "${SRC}[$extra]"
   rm -rf "$PREFIX/tmp"
 
   echo "==> systemd units"
