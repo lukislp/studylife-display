@@ -57,7 +57,9 @@ jobs:
       - name: Installer smoke test (arm64 Debian Trixie container)
         run: |
           # debian:trixie, pinned by digest.
-          docker run --platform linux/arm64 -v "$PWD:/repo:ro" \
+          # LATEST_TAG: the release context, installed with --tag like a release build does.
+          LATEST_TAG="$(git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main 2>/dev/null || true)"
+          docker run --platform linux/arm64 -e LATEST_TAG="$LATEST_TAG" -v "$PWD:/repo:ro" \
             debian@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c \
             bash /repo/image/tests/installer-smoke.sh
 

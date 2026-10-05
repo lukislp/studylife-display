@@ -103,6 +103,7 @@ check "service user drop-in for the web unit" grep -q '^User=studylife-display$'
   /etc/systemd/system/studylife-display-web.service.d/10-service-user.conf
 
 VENV=/opt/studylife-display/venv
+check "the installed checkout is clean (a dirty tree changes the reported version)"   test -z "$(git -C /opt/studylife-display/src status --porcelain)"
 check "package imports" "$VENV/bin/python" -c "import studylife_display"
 mkdir -p /tmp/preview
 check "hardware-free sample frame renders" env DISPLAY_DRIVER=file DISPLAY_STATE_PATH=/tmp/preview/last.json \
@@ -157,6 +158,14 @@ check "setup.env: unknown key reported" contains "$out" "ignoring unknown key FO
 check "setup.env: applied lines no longer carry values" test "$(grep -c 'my-own-token-123' /boot/firmware/studylife-display/setup.env)" = 0
 check "setup.env: a chosen token removes the generated one's file" test ! -e /boot/firmware/studylife-display/web-token.txt
 check "env file keeps its owner and mode" test "$(stat -c '%U:%G %a' /etc/studylife-display.env)" = "root:studylife-display 640"
+
+# ---------------------------------------------------------------- release context
+# What a release build does: install a real tag with --tag and require exactly that version.
+if [ -n "${LATEST_TAG:-}" ]; then
+  bash "$WORK/deploy/install.sh" --image --tag "$LATEST_TAG" >/dev/null
+  check "--tag $LATEST_TAG leaves a clean checkout"     test -z "$(git -C /opt/studylife-display/src status --porcelain)"
+  check "--tag $LATEST_TAG reports exactly that version"     test "$("$VENV/bin/studylife-display" --version)" = "studylife-display ${LATEST_TAG#v}"
+fi
 
 # ---------------------------------------------------------------- inky guard
 if bash "$WORK/deploy/install.sh" --image --local --panel inky_impression_7in3 >/tmp/inky.log 2>&1; then
