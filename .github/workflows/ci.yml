@@ -199,3 +199,21 @@ jobs:
         uses: lukislp/ci-workflows/.github/actions/semantic-release@7a0ba9fb414f1f87d1efc30cf512ba8feba8cf72 # v1.7.14
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------
+  # SD-card image: built from the tag semantic-release has just created and attached to that
+  # release. Called as a reusable workflow because a release made with GITHUB_TOKEN does not
+  # trigger `release` events for other workflows. The image never needs reflashing for
+  # updates (the Pi's update.sh keeps working), so a failed image build does not block the
+  # release itself; re-run it with the "SD-card image" workflow's tag input.
+  # ---------------------------------------------------------------------
+  image:
+    needs: [get-version, semantic-release]
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.get-version.outputs.published == 'true'
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/image.yml
+    with:
+      version: ${{ needs.get-version.outputs.next_version }}
