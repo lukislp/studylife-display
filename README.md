@@ -13,6 +13,9 @@ panel; between refreshes the Pi and the panel sleep. Seven layouts are built in,
 mode picks between them, and a small web interface on the Pi switches them from a phone,
 connects the StudyLife account without copying a key, and holds the settings.
 
+Fastest start: [flash the ready-made image](#flash-the-ready-made-image) from the latest
+release and enter Wi-Fi and hostname in the Raspberry Pi Imager - no SSH, no installer.
+
 ## What it shows
 
 ![Preview of the rendered dashboard](docs/preview.png)
@@ -422,9 +425,14 @@ The Waveshare models all come with the `pi` extra. The Inky Impression needs its
 sudo /opt/studylife-display/venv/bin/pip install '/opt/studylife-display/src[inky]'
 ```
 
-Then set `DISPLAY_PANEL=...` in `/etc/studylife-display.env` and restart the services. The
-installer and the update script do not know about `DISPLAY_PANEL` yet, so a panel other than
-the default is set up by hand like this.
+Then set `DISPLAY_PANEL=...` in `/etc/studylife-display.env` and restart the services.
+`deploy/install.sh --panel KEY` does both for you (it writes `DISPLAY_PANEL`, installs the
+`inky` extra for `inky_*` keys and the `pi` extra otherwise, and enables SPI); `deploy/update.sh`
+installs the extra that matches `DISPLAY_PANEL`. Without `--panel` the installer behaves as
+before. For the Inky Impression the board also needs I2C and `dtoverlay=spi0-0cs` in
+`config.txt`, which only the image build adds automatically (`--image --panel inky_...`); on
+a running system add them with `raspi-config` or by hand. This path is not verified on a real
+Inky.
 
 ### Wiring
 
@@ -519,7 +527,102 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 local time of the server, and a freshly imaged Pi runs on UTC. "Today" is the calendar day in
 that zone, and a session from 23:30 to 00:30 counts half an hour on each of the two days.
 
-## Install on the Pi
+## Flash the ready-made image
+
+Every release carries a ready-made SD-card image, `studylife-display-<version>.img.xz`: the
+stock Raspberry Pi OS Lite (64-bit, Trixie) with StudyLife Display already installed, SPI
+enabled and the services enabled, set up for the default panel (the Waveshare 7.5" HAT V2).
+No SSH session and no installer are needed; the Wi-Fi, hostname, user and SSH settings go in
+through the Raspberry Pi Imager as for any other Raspberry Pi OS card.
+
+1. **Download** `studylife-display-<version>.img.xz` (and its `.sha256`) from the
+   [latest release](https://github.com/lukislp/studylife-display/releases/latest).
+   `sha256sum -c studylife-display-<version>.img.xz.sha256` checks it; the release also
+   carries a build-provenance attestation (`gh attestation verify <file> --repo
+   lukislp/studylife-display`) and the lists of the Python and apt packages inside.
+2. **Flash it** with the [Raspberry Pi Imager](https://www.raspberrypi.com/software/): choose
+   *Use custom* and pick the `.img.xz`. Alternatively start the Imager with this project's
+   repository file, which lists the image as an operating system of its own (unofficial: it
+   is not in the Imager's built-in list):
+
+   ```bash
+   rpi-imager --repo https://github.com/lukislp/studylife-display/releases/latest/download/os-list.json
+   ```
+
+3. **Customise** in the Imager's OS customisation dialog: hostname, user and password,
+   Wi-Fi, locale and time zone, and SSH if you want it (it is not needed for the setup).
+   The image keeps Raspberry Pi OS's own mechanism for this: Trixie reads these settings
+   from cloud-init files (`user-data`, `network-config`) on the boot partition, which the
+   Imager writes. If the Imager does not offer the customisation for the custom file, use
+   the `--repo` way above, which tells it the image is a cloud-init Raspberry Pi OS image.
+4. **Optional, before the first boot: tell it your StudyLife server.** Put the card back into
+   the PC (the Imager ejects it), open the `studylife-display/setup.env` file on the boot
+   partition (the small FAT partition, called `bootfs`), remove the `#` in front of the lines
+   you want and save:
+
+   | Line | Meaning |
+   | --- | --- |
+   | `STUDYLIFE_BASE_URL=https://studylife.example.com` | Your StudyLife server. Connecting the account needs it |
+   | `DISPLAY_WEB_TOKEN=...` | Password of the display's web interface, at least 12 characters. If you leave it out, a random one is generated (below) |
+   | `DISPLAY_PANEL=...` | The attached panel, one of the keys in [Supported panels](#supported-panels); the default is `waveshare_7in5_v2` |
+   | `DISPLAY_ROTATE`, `DISPLAY_LANGUAGE`, `STUDYLIFE_TIMEZONE` | As in the [configuration table](#studylife-setup) |
+
+   On the next boot the values move into `/etc/studylife-display.env` and the lines in
+   `setup.env` are replaced by a comment, so a token does not stay on the card. Only these
+   keys are read, and each value is checked (letters, digits and `. _ : / @ + = ~ -`).
+   Without this step, set `STUDYLIFE_BASE_URL` over SSH in `/etc/studylife-display.env`
+   and restart the web service, exactly as in step 3 of the [manual
+   install](#install-on-an-existing-system).
+5. **Boot the Pi** with the panel attached. The first boot takes a few minutes (the stock
+   image expands its filesystem and applies the Imager's settings; it may reboot once). A
+   minute or so after it is up, the panel shows the [setup screen](#setup-screen): a QR code
+   and the address `http://<hostname>.local:8795/connect`. Nothing is shown before the
+   account is connected, by design.
+6. **Connect the account.** Scan the QR code or type the address, sign in with the web
+   token (the one from `setup.env`, or the generated one: it is written to
+   `studylife-display/web-token.txt` on the boot partition, and `sudo grep DISPLAY_WEB_TOKEN
+   /etc/studylife-display.env` shows it over SSH; delete the file after noting it, anyone
+   holding the card can read it) and follow [Connecting the account](#connecting-the-account).
+   The first refresh runs by itself and replaces the setup screen with the dashboard.
+
+What is *not* in the image, because it must differ per device: the TLS certificate (made on
+the first boot for `<hostname>.local`), the web token, the API key, the SSH host keys, the
+machine id (and with it the display's id in Home Assistant and in the mDNS announcement),
+the Wi-Fi credentials, any cached data. `image/scan-rootfs.sh` fails the build if any of
+them ends up in the image.
+
+**Updates.** The image never needs to be flashed again: it contains the same installation as
+the manual install, including `deploy/update.sh`, so the release it was built from is just
+the starting point. [Updating](#updating) (and the opt-in daily `DISPLAY_AUTO_UPDATE`) work
+unchanged; a newer image is only convenient for the next new card. The services run as a
+dedicated system account (`studylife-display`) instead of `pi`, because Raspberry Pi OS
+Trixie has no `pi` user until you create one in the Imager.
+
+**One image, one default panel.** The image is built for `waveshare_7in5_v2`. The other
+Waveshare models use the same software: pick the key in `setup.env` (step 4) or in
+`/etc/studylife-display.env`. The Inky Impression needs a different driver and boot
+configuration, so it is not part of the release assets; build one for it with
+`image/build-image.sh --panel inky_impression_7in3` (see [Building the
+image](#building-the-image)) or install by hand as described under
+[Installing the driver for a non-default panel](#installing-the-driver-for-a-non-default-panel).
+
+**What has not been verified.** The CI build proves that the image contains a working
+installation (the package imports, the sample dashboard and the setup screen render through
+the file driver, the units are enabled, nothing per-device is baked in) and the installer and
+first-boot scripts are tested in an arm64 container. What it cannot prove is a **first boot
+of a freshly flashed card on real hardware** - the Imager's customisation reaching a
+cloud-init Raspberry Pi OS from a custom image, the first-boot unit's ordering against
+cloud-init, the panel actually showing the setup screen. Until someone has done that on a
+card, treat the image as unproven, and on the first flash check, in this order:
+`systemctl status studylife-display-firstboot` (ran, certificate and token created),
+`systemctl is-active studylife-display-web` and `studylife-display.timer`, the panel (setup
+screen after about two minutes), `http://<hostname>.local:8795/healthz`, and that
+`/etc/machine-id` is not the same on two cards flashed from the same file. Reports of what
+happened, good or bad, are welcome as issues.
+
+## Install on an existing system
+
+The manual route, for a Pi that is already running or when you want to follow `main`.
 
 1. Flash **Raspberry Pi OS Lite (64-bit)** with Raspberry Pi Imager. In the Imager's
    settings set the hostname, the `pi` user and password, Wi-Fi and SSH ("headless"); no
@@ -728,6 +831,26 @@ before showing it, the layouts (and their golden frames) stay upright.
 | Refresh from the browser reports "busy" or waits | The timer's refresh holds `panel.lock`; it is over within seconds, a stuck one times out after 60 s |
 | Layout choice falls back to `DISPLAY_LAYOUT` after a reboot | `journalctl -u studylife-display-persist -u studylife-display-restore -n 20`; after a choice in the web interface `ls /boot/firmware/studylife-display/` must show `settings.json`, and `systemctl status studylife-display-persist.path` must be active |
 | `studylife-display check` | Calls the four endpoints and prints what the dashboard would be built from, without touching the panel |
+
+## Building the image
+
+`.github/workflows/image.yml` builds the image: on every release (called from `ci.yml` right
+after semantic-release, because a release created with `GITHUB_TOKEN` does not trigger
+`release` events), on `workflow_dispatch` (with a tag it re-attaches the image to that
+release), and on pull requests that touch `image/`, `deploy/` or the workflow (build + scan,
+nothing published; the image is kept three days as an artifact). It downloads the pinned
+stock Raspberry Pi OS Lite image (`image/base-image.env`: URL and SHA-256, bumped by hand),
+runs `deploy/install.sh --image` in a chroot, verifies the installation, cleans, scans for
+per-device artifacts and compresses it. Locally, on a Linux host with the tools listed in
+`image/build-image.sh` (and `qemu-user-static` when it is not arm64):
+
+```bash
+sudo image/build-image.sh --version 0.0.0-local --local --out dist                    # this checkout
+sudo image/build-image.sh --version 1.4.0 --tag v1.4.0 --panel inky_impression_7in3   # a release, other panel
+```
+
+`image/README.md` has the details: what is verified at which step, the first-boot unit, the
+Imager repository file and the security notes.
 
 ## Development
 
