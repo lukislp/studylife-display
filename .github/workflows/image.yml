@@ -1,0 +1,215 @@
+name: SD-card image
+
+# Builds the flashable SD-card image (image/build-image.sh) and, for a release, attaches it to
+# the GitHub release.
+#
+#  - workflow_call: ci.yml calls this right after semantic-release has created the release.
+#    A release created with the workflow's own GITHUB_TOKEN does NOT trigger `release`
+#    events for other workflows, so `on: release` would never fire; calling the workflow from
+#    the job that knows the new version is the trigger that really runs.
+#  - pull_request (image/deploy paths only): build + scan, nothing is published; the image is
+#    kept for three days as an artifact for debugging.
+#  - workflow_dispatch: with a tag, builds and attaches the image to that existing release
+#    (re-run after a failed release build); without one, a test build like a pull request.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Released version without the leading v (the tag is v<version>)"
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - "image/**"
+      - "deploy/**"
+      - ".github/workflows/image.yml"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag (vX.Y.Z) to build and attach the image to; empty = test build"
+        required: false
+        type: string
+
+concurrency:
+  group: image-${{ inputs.version || inputs.tag || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Least-privilege default; the publish job asks for more itself.
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    # The installer's image mode and the first-boot script, exercised for real in an arm64
+    # Debian container (native on this runner, no emulation) - fast feedback before the
+    # image build, and the only place the "scanner must fail on a booted system" and the
+    # setup.env import cases run.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      # No harden-runner here: it does not support arm runners in the community tier ("ARM
+      # runners are not supported"). The job holds a read-only token and no secrets, and
+      # builds nothing that is published; the image itself is built on the hardened x64 job.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Installer smoke test (arm64 Debian Trixie container)
+        run: |
+          # debian:trixie, pinned by digest.
+          docker run --platform linux/arm64 -v "$PWD:/repo:ro" \
+            debian@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c \
+            bash /repo/image/tests/installer-smoke.sh
+
+  build:
+    # x64 + qemu-user-static rather than the arm runner, because harden-runner (the egress
+    # allowlist below) does not support arm runners.
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: block
+          # What the build talks to: GitHub (checkout, artifacts, the release tag and the
+          # Waveshare driver repository), the pinned base image on downloads.raspberrypi.com,
+          # the Ubuntu mirrors (qemu-user-static on the runner), and - from inside the chroot -
+          # Debian and the Raspberry Pi archive (apt, plain http as in the stock image),
+          # PyPI and piwheels.
+          allowed-endpoints: >
+            *.githubapp.com:443
+            *.blob.core.windows.net:443
+            api.github.com:443
+            archive.raspberrypi.com:443
+            archive.raspberrypi.com:80
+            archive.ubuntu.com:80
+            azure.archive.ubuntu.com:443
+            azure.archive.ubuntu.com:80
+            deb.debian.org:443
+            deb.debian.org:80
+            downloads.raspberrypi.com:443
+            files.pythonhosted.org:443
+            github.com:443
+            pypi.org:443
+            results-receiver.actions.githubusercontent.com:443
+            security.debian.org:80
+            security.ubuntu.com:80
+            www.piwheels.org:443
+      - name: Decide what is built
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TAG: ${{ inputs.tag }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          tag=""
+          if [ -n "$INPUT_VERSION" ]; then
+            tag="v$INPUT_VERSION"
+          elif [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          fi
+          if [ -n "$tag" ]; then
+            if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::not a release tag: $tag"
+              exit 1
+            fi
+            version="${tag#v}"
+            publish=true
+          else
+            version="0.0.0-${PR_NUMBER:+pr$PR_NUMBER}"
+            [ "$version" != "0.0.0-" ] || version="0.0.0-dev"
+            publish=false
+          fi
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+          echo "building $version (tag: ${tag:-none}, publish: $publish)"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # A release build builds exactly the tagged commit; a pull-request build the merge
+          # result. Full history and tags: the package version comes from git (hatch-vcs).
+          ref: ${{ steps.plan.outputs.tag != '' && format('refs/tags/{0}', steps.plan.outputs.tag) || '' }}
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Install qemu-user-static (runs the arm64 chroot)
+        run: |
+          # Only the Ubuntu archive is refreshed: the runner image carries other apt sources
+          # whose hosts the egress policy does not (and should not) allow.
+          sudo apt-get update -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources             -o Dir::Etc::sourceparts=-
+          sudo apt-get install -y --no-install-recommends qemu-user-static
+          update-binfmts --display qemu-aarch64 || true
+      - name: Disk before the build
+        run: df -h / /mnt
+      - name: Build the image
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -n "$TAG" ]; then
+            sudo env WORK_DIR=/mnt/studylife-image-work               bash image/build-image.sh --version "$VERSION" --tag "$TAG" --out "$RUNNER_TEMP/dist"
+          else
+            sudo env WORK_DIR=/mnt/studylife-image-work               bash image/build-image.sh --version "$VERSION" --local --out "$RUNNER_TEMP/dist"
+          fi
+      - name: Hand the build output to the runner user
+        # The build ran as root (sudo), so dist/ and its files are root-owned.
+        run: sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/dist"
+      - name: Imager repository file
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          python3 image/make-os-list.py --meta "$RUNNER_TEMP/dist/image-meta.env" \
+            --tag "${TAG:-v0.0.0-test}" --out "$RUNNER_TEMP/dist/os-list.json"
+          cat "$RUNNER_TEMP/dist/os-list.json"
+          ls -l "$RUNNER_TEMP/dist"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sd-card-image
+          path: ${{ runner.temp }}/dist/*
+          # The image is already xz-compressed.
+          compression-level: 0
+          retention-days: ${{ steps.plan.outputs.publish == 'true' && 1 || 3 }}
+          if-no-files-found: error
+
+  publish:
+    needs: [build]
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # upload the release assets
+      id-token: write # keyless signing of the provenance attestation
+      attestations: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sd-card-image
+          path: dist
+      - name: Provenance attestation for the image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.img.xz
+      - name: Attach the files to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -c ./*.sha256)
+          # image-meta.env is build plumbing, not a release asset.
+          rm -f dist/image-meta.env
+          gh release upload "$TAG" dist/* --repo "$REPO" --clobber
+          gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[] | "\(.name)\t\(.size)"'

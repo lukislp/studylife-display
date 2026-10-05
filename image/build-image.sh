@@ -134,7 +134,7 @@ in_chroot() {
 }
 
 log "copying the repository into the chroot"
-git clone --quiet --no-hardlinks "$REPO_ROOT" "$MNT/tmp/studylife-src"
+git -c safe.directory='*' clone --quiet --no-hardlinks "$REPO_ROOT" "$MNT/tmp/studylife-src"
 
 log "running deploy/install.sh --image (panel $PANEL)"
 if [ -n "$TAG" ]; then

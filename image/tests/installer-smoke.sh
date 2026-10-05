@@ -53,6 +53,7 @@ echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive.gpg] https://archiv
 apt-get update -qq
 # What stock Raspberry Pi OS Lite already has and the installer relies on.
 apt-get install -y -qq systemd git gcc python3-dev openssl >/dev/null
+git config --global --add safe.directory '*'  # the mounted checkout belongs to another uid
 git clone -q --no-hardlinks "$REPO" "$WORK"
 
 # ---------------------------------------------------------------- argument handling
