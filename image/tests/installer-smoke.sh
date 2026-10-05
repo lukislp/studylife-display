@@ -104,15 +104,16 @@ check "service user drop-in for the web unit" grep -q '^User=studylife-display$'
 VENV=/opt/studylife-display/venv
 check "package imports" "$VENV/bin/python" -c "import studylife_display"
 mkdir -p /tmp/preview
-check "hardware-free sample frame renders" env DISPLAY_DRIVER=file \
+check "hardware-free sample frame renders" env DISPLAY_DRIVER=file DISPLAY_STATE_PATH=/tmp/preview/last.json \
   "$VENV/bin/studylife-display" preview --sample --out /tmp/preview/sample.png
-check "setup screen renders (no key)" env DISPLAY_DRIVER=file STUDYLIFE_BASE_URL=https://studylife.example.com \
+check "setup screen renders (no key)" env DISPLAY_DRIVER=file DISPLAY_STATE_PATH=/tmp/preview/last.json STUDYLIFE_BASE_URL=https://studylife.example.com \
   STUDYLIFE_API_KEY= DISPLAY_SETUP_URL=http://pi.local:8795/connect \
   "$VENV/bin/studylife-display" preview --out /tmp/preview/setup.png
 check "preview files are PNGs" test "$(head -c 4 /tmp/preview/setup.png | tail -c 3)" = PNG
 
 # ---------------------------------------------------------------- the scanner
 SCAN="$WORK/image/scan-rootfs.sh"
+rm -f /var/lib/dbus/machine-id  # the container has one; build-image.sh removes it in its clean step
 check "scanner passes on the freshly installed image state" bash "$SCAN" / /boot/firmware
 
 # ---------------------------------------------------------------- first boot
