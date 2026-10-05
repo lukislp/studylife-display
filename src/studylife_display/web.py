@@ -164,6 +164,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         ),
         "auto_now": "derzeit: {layout}",
         "last_updated": "Panel zuletzt aktualisiert: {time}",
+        "frame_checked": "Zuletzt geprüft: {time}",
         "never_updated": "Panel noch nie aktualisiert (kein Zwischenspeicher).",
         "current_heading": "Aktuell auf dem Panel",
         "current_line": "Gezeigt seit {time} · {what}",
@@ -347,6 +348,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         ),
         "auto_now": "currently: {layout}",
         "last_updated": "Panel last updated: {time}",
+        "frame_checked": "Last checked: {time}",
         "never_updated": "Panel never updated yet (no cache).",
         "current_heading": "Currently on the panel",
         "current_line": "Shown since {time} · {what}",
@@ -888,6 +890,10 @@ class WebApp:
             parts.append(f"<p class='note'>{html.escape(quiet)}</p>")
         state_dir = self.state_dir
         status = load_status(state_dir, zone(settings.studylife_timezone))
+        if status.last_frame_check_at is not None and not is_sample:
+            checked = status.last_frame_check_at.strftime("%H:%M")
+            line = t["frame_checked"].format(time=checked)
+            parts.append(f"<p class='note'>{html.escape(line)}</p>")
         error = status.last_error
         if error is not None:
             when = error.at.strftime(TEXT[language]["date_format"] + " %H:%M")

@@ -124,12 +124,22 @@ def check_auto_window(value: str) -> str:
 
 
 MAX_RECAP_MINUTES = 240
+MAX_REDRAW_AFTER_MINUTES = 1440
 
 
 def check_recap_minutes(value: int) -> int:
     if not 0 <= value <= MAX_RECAP_MINUTES:
         raise ValueError(
             f"DISPLAY_AUTO_RECAP_MINUTES must be between 0 and {MAX_RECAP_MINUTES}, not {value}"
+        )
+    return value
+
+
+def check_redraw_after_minutes(value: int) -> int:
+    if not 0 <= value <= MAX_REDRAW_AFTER_MINUTES:
+        raise ValueError(
+            "DISPLAY_REDRAW_AFTER_MINUTES must be between 0 and "
+            f"{MAX_REDRAW_AFTER_MINUTES}, not {value}"
         )
     return value
 
@@ -239,6 +249,16 @@ class Settings(BaseSettings):
     # scheduled `run` at or after it clears the panel to white before drawing the frame.
     # It runs inside quiet hours too, being the one refresh that matters. Empty = off.
     display_clear_at: str = "04:00"
+
+    # A full refresh flickers and wears the panel, so a frame that looks the same as the one
+    # already on it (the header's fetch time does not count) is not drawn again. Set false to
+    # draw on every run like before.
+    display_skip_unchanged: bool = True
+
+    # Still redraw an unchanged frame once the last real draw is this many minutes old, so the
+    # panel is refreshed at least that often (ghosting, and the header time stays honest).
+    # 0 = no age limit: the daily clear is then the only guarantee.
+    display_redraw_after_minutes: int = 60
 
     # Whether the web interface may ask GitHub (once per six hours, cached in the state
     # directory) whether a newer release exists. Off by default: nothing on the Pi talks to
@@ -361,6 +381,11 @@ class Settings(BaseSettings):
     @classmethod
     def _recap_minutes(cls, value: int) -> int:
         return check_recap_minutes(value)
+
+    @field_validator("display_redraw_after_minutes")
+    @classmethod
+    def _redraw_after_minutes(cls, value: int) -> int:
+        return check_redraw_after_minutes(value)
 
     @field_validator("display_duo")
     @classmethod

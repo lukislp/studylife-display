@@ -2,6 +2,7 @@ import json
 import logging
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -688,3 +689,315 @@ class TestCurrentFrame:
         assert out.exists()
         assert load_current_frame(env["state"].parent, tz) is None
         assert not (env["state"].parent / "current.png").exists()
+
+
+class TestSkipUnchangedFrames:
+    """A full refresh flickers and wears the panel: an identical frame is not drawn again,
+    but the daily clear, explicit requests, real changes and the age limit always draw."""
+
+    @pytest.fixture(autouse=True)
+    def calm(self, env: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("DISPLAY_LAYOUT", "classic")
+        monkeypatch.setenv("DISPLAY_CLEAR_AT", "")
+        monkeypatch.delenv("DISPLAY_QUIET_HOURS", raising=False)
+
+    @pytest.fixture
+    def draws(self, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+        """One entry per real draw: whether it cleared first. Calls the real `present`."""
+        seen: list[bool] = []
+        real_present = main_module.present
+
+        def spy(display: Any, image: Image.Image, clear_first: bool = False) -> None:
+            seen.append(clear_first)
+            real_present(display, image, clear_first)
+
+        monkeypatch.setattr(main_module, "present", spy)
+        return seen
+
+    @staticmethod
+    def status(env: dict[str, Path]) -> dict[str, Any]:
+        raw = (env["state"].parent / "status.json").read_text(encoding="utf-8")
+        parsed: dict[str, Any] = json.loads(raw)
+        return parsed
+
+    @staticmethod
+    def age_the_frame(env: dict[str, Path], minutes: int) -> None:
+        path = env["state"].parent / "current.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        shown = datetime.fromisoformat(record["shown_at"]) - timedelta(minutes=minutes)
+        record["shown_at"] = shown.isoformat()
+        path.write_text(json.dumps(record), encoding="utf-8")
+
+    @respx.mock
+    def test_first_run_draws_and_an_identical_second_run_does_not(
+        self,
+        env: dict[str, Path],
+        sample: Any,
+        draws: list[bool],
+        caplog: pytest.LogCaptureFixture,
+        tz: ZoneInfo,
+    ) -> None:
+        caplog.set_level(logging.INFO, logger="studylife_display")
+        mock_api(sample)
+        assert main(["run"]) == 0
+        assert draws == [False]
+        first = load_current_frame(env["state"].parent, tz)
+        assert first is not None and first.fingerprint
+        written = env["frame"].stat().st_mtime_ns
+        first_status = self.status(env)
+
+        assert main(["run"]) == 0
+        assert draws == [False]  # the driver was not touched
+        assert env["frame"].stat().st_mtime_ns == written
+        assert load_current_frame(env["state"].parent, tz) == first  # shown_at unchanged
+        assert "frame unchanged, not redrawing the panel (last drawn " in caplog.text
+        second_status = self.status(env)
+        assert second_status["last_panel_update_at"] == first_status["last_panel_update_at"]
+        assert second_status["last_frame_check_at"] >= first_status["last_frame_check_at"]
+        assert second_status["last_fetch_at"] >= first_status["last_fetch_at"]
+
+    @respx.mock
+    def test_changed_data_draws(self, env: dict[str, Path], sample: Any, draws: list[bool]) -> None:
+        mock_api(sample)
+        assert main(["run"]) == 0
+        metrics, history, timer, sessions = sample
+        changed = {**metrics, "streak": {"current": 13, "longest": 23}}
+        mock_api((changed, history, timer, sessions))
+        assert main(["run"]) == 0
+        assert draws == [False, False]
+
+    @respx.mock
+    def test_a_stale_marker_appearing_and_growing_draws(
+        self, env: dict[str, Path], sample: Any, draws: list[bool], tz: ZoneInfo
+    ) -> None:
+        mock_api(sample)
+        assert main(["run"]) == 0
+        cached = load_snapshot(env["state"], tz)
+        assert cached is not None
+
+        def fail_with_cache_aged(minutes: int) -> None:
+            aged = datetime.now(tz) - timedelta(minutes=minutes)
+            save_snapshot(env["state"], replace(cached, fetched_at=aged))
+            respx.get(f"{BASE_URL}/api/metrics/summary").mock(
+                side_effect=httpx.ConnectError("down")
+            )
+            assert main(["run"]) == 0
+
+        fail_with_cache_aged(31)
+        assert len(draws) == 2  # fresh -> stale
+        fail_with_cache_aged(31)
+        assert len(draws) == 2  # still "vor 31 min": nothing to redraw
+        fail_with_cache_aged(40)
+        assert len(draws) == 3  # the number moved
+        mock_api(sample)
+        assert main(["run"]) == 0
+        assert len(draws) == 4  # stale -> fresh again
+
+    @respx.mock
+    def test_forced_refresh_draws_an_unchanged_frame(
+        self, env: dict[str, Path], sample: Any, draws: list[bool]
+    ) -> None:
+        mock_api(sample)
+        assert main(["run"]) == 0
+        assert main(["refresh-now"]) == 0
+        settings = main_module._settings(False)
+        assert main_module.refresh_panel(settings, force=True) == 0
+        assert draws == [False, False, False]
+        assert main_module.refresh_panel(settings) == 0
+        assert len(draws) == 3
+
+    @respx.mock
+    def test_the_web_refresh_is_forced(
+        self, env: dict[str, Path], sample: Any, draws: list[bool]
+    ) -> None:
+        mock_api(sample)
+        settings = main_module._settings(False)
+        assert main_module.make_serve_refresh(settings)() == 0
+        assert main_module.make_serve_refresh(settings)() == 0
+        assert len(draws) == 2
+
+    @respx.mock
+    def test_the_daily_clear_draws_an_unchanged_frame_even_inside_quiet_hours(
+        self,
+        env: dict[str, Path],
+        sample: Any,
+        draws: list[bool],
+        monkeypatch: pytest.MonkeyPatch,
+        tz: ZoneInfo,
+    ) -> None:
+        monkeypatch.setenv("DISPLAY_CLEAR_AT", "00:00")
+        monkeypatch.setenv("DISPLAY_QUIET_HOURS", quiet_hours_around(datetime.now(tz)))
+        mock_api(sample)
+        assert main(["run"]) == 0
+        assert draws == [True]  # first run: the clear is due
+        assert main(["run"]) == 0
+        assert draws == [True]  # cleared today, quiet hours: nothing at all
+        last_clear = env["state"].parent / "last_clear"
+        last_clear.write_text((datetime.now(tz) - timedelta(days=1)).isoformat(), encoding="utf-8")
+        assert main(["run"]) == 0
+        assert draws == [True, True]  # due again: clear + draw although unchanged
+        assert clear_file(env).exists()
+        recorded = datetime.fromisoformat(last_clear.read_text(encoding="utf-8"))
+        assert abs((datetime.now(tz) - recorded).total_seconds()) < 60
+
+    @respx.mock
+    def test_the_daily_clear_draws_an_unchanged_frame_outside_quiet_hours(
+        self,
+        env: dict[str, Path],
+        sample: Any,
+        draws: list[bool],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mock_api(sample)
+        assert main(["run"]) == 0
+        monkeypatch.setenv("DISPLAY_CLEAR_AT", "00:00")
+        assert main(["run"]) == 0
+        assert draws == [False, True]
+        assert main(["run"]) == 0  # the clear is done for today, the frame unchanged
+        assert draws == [False, True]
+
+    @respx.mock
+    def test_age_limit_redraws_an_unchanged_frame(
+        self, env: dict[str, Path], sample: Any, draws: list[bool]
+    ) -> None:
+        mock_api(sample)
+        assert main(["run"]) == 0
+        self.age_the_frame(env, 59)
+        assert main(["run"]) == 0
+        assert len(draws) == 1  # default limit is 60 minutes
+        self.age_the_frame(env, 2)
+        assert main(["run"]) == 0
+        assert len(draws) == 2
+
+    @respx.mock
+    def test_age_limit_is_configurable_and_zero_means_never(
+        self,
+        env: dict[str, Path],
+        sample: Any,
+        draws: list[bool],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mock_api(sample)
+        monkeypatch.setenv("DISPLAY_REDRAW_AFTER_MINUTES", "10")
+        assert main(["run"]) == 0
+        self.age_the_frame(env, 11)
+        assert main(["run"]) == 0
+        assert len(draws) == 2
+        monkeypatch.setenv("DISPLAY_REDRAW_AFTER_MINUTES", "0")
+        self.age_the_frame(env, 5000)
+        assert main(["run"]) == 0
+        assert len(draws) == 2
+
+    @respx.mock
+    def test_skip_unchanged_off_draws_every_time(
+        self,
+        env: dict[str, Path],
+        sample: Any,
+        draws: list[bool],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("DISPLAY_SKIP_UNCHANGED", "false")
+        mock_api(sample)
+        for _ in range(3):
+            assert main(["run"]) == 0
+        assert len(draws) == 3
+
+    @respx.mock
+    def test_a_rotation_change_draws(
+        self,
+        env: dict[str, Path],
+        sample: Any,
+        draws: list[bool],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mock_api(sample)
+        assert main(["run"]) == 0
+        monkeypatch.setenv("DISPLAY_ROTATE", "180")
+        assert main(["run"]) == 0
+        assert len(draws) == 2
+        assert main(["run"]) == 0
+        assert len(draws) == 2
+
+    @respx.mock
+    def test_a_layout_change_draws(
+        self,
+        env: dict[str, Path],
+        sample: Any,
+        draws: list[bool],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mock_api(sample)
+        assert main(["run"]) == 0
+        monkeypatch.setenv("DISPLAY_LAYOUT", "week")
+        assert main(["run"]) == 0
+        assert len(draws) == 2
+
+    @respx.mock
+    def test_old_current_json_without_a_fingerprint_draws(
+        self, env: dict[str, Path], sample: Any, draws: list[bool]
+    ) -> None:
+        mock_api(sample)
+        assert main(["run"]) == 0
+        path = env["state"].parent / "current.json"
+        record = json.loads(path.read_text(encoding="utf-8"))
+        del record["fingerprint"]
+        path.write_text(json.dumps(record), encoding="utf-8")
+        assert main(["run"]) == 0
+        assert len(draws) == 2
+        assert main(["run"]) == 0
+        assert len(draws) == 2  # the redraw stored a fingerprint again
+
+    @respx.mock
+    def test_a_missing_current_png_draws(
+        self, env: dict[str, Path], sample: Any, draws: list[bool]
+    ) -> None:
+        mock_api(sample)
+        assert main(["run"]) == 0
+        (env["state"].parent / "current.png").unlink()
+        assert main(["run"]) == 0
+        assert len(draws) == 2
+
+    @respx.mock
+    def test_an_unchanged_error_screen_is_skipped_too(
+        self, env: dict[str, Path], draws: list[bool]
+    ) -> None:
+        respx.get(f"{BASE_URL}/api/metrics/summary").mock(side_effect=httpx.ConnectError("down"))
+        assert main(["run"]) == 1
+        assert main(["run"]) == 1  # still a failure, but the same screen: not redrawn
+        assert len(draws) == 1
+        assert main(["refresh-now"]) == 1
+        assert len(draws) == 2
+
+    def test_an_unchanged_setup_screen_is_skipped(
+        self, env: dict[str, Path], draws: list[bool], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("STUDYLIFE_API_KEY", "")
+        assert main(["run"]) == 0
+        assert main(["run"]) == 0
+        assert len(draws) == 1
+        assert main(["refresh-now"]) == 0
+        assert len(draws) == 2
+
+    @respx.mock
+    def test_preview_always_renders(
+        self, env: dict[str, Path], sample: Any, tmp_path: Path
+    ) -> None:
+        mock_api(sample)
+        out = tmp_path / "live.png"
+        assert main(["preview", "--out", str(out)]) == 0
+        out.unlink()
+        assert main(["preview", "--out", str(out)]) == 0
+        assert out.exists()
+
+    @respx.mock
+    def test_a_skipped_frame_does_not_take_the_panel_lock(
+        self, env: dict[str, Path], sample: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_api(sample)
+        assert main(["run"]) == 0
+
+        def locked(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("an unchanged frame must not take the panel lock")
+
+        monkeypatch.setattr(main_module, "panel_lock", locked)
+        assert main(["run"]) == 0

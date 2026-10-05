@@ -525,6 +525,30 @@ class TestHealth:
         assert report["layout"] in {"classic", "focus", "exam", "week", "agenda"}
         assert report["sessions_ok"] is True
 
+    def test_frame_checks_are_reported_without_changing_the_status(
+        self, client: Client, settings: Settings, sample: Any, tz: ZoneInfo
+    ) -> None:
+        now = fresh_cache(settings, sample, tz)
+        checked = now + timedelta(minutes=5)
+        path = Path(settings.display_state_path)
+        save_status(
+            path.parent,
+            Status(
+                last_fetch_ok=True,
+                last_fetch_at=now,
+                last_panel_update_at=now - timedelta(minutes=50),
+                last_frame_check_at=checked,
+            ),
+        )
+        _, _, body = client.request("GET", "/healthz")
+        report = json.loads(body)
+        assert report["status"] == "ok"  # draws are not what "ok" is based on
+        assert report["last_panel_update_at"] == (now - timedelta(minutes=50)).isoformat()
+        assert report["last_frame_check_at"] == checked.isoformat()
+        client.login()
+        _, _, page = client.request("GET", "/")
+        assert f"{checked:%H:%M}".encode() in page
+
     def test_failed_fetch_with_a_cache_is_degraded(
         self, client: Client, settings: Settings, sample: Any, tz: ZoneInfo
     ) -> None:

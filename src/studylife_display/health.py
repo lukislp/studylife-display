@@ -90,6 +90,9 @@ def health_report(settings: Settings, now: datetime) -> tuple[dict[str, Any], HT
         "last_panel_update_at": (
             None if status.last_panel_update_at is None else status.last_panel_update_at.isoformat()
         ),
+        "last_frame_check_at": (
+            None if status.last_frame_check_at is None else status.last_frame_check_at.isoformat()
+        ),
         "layout": layout,
         "quiet_hours_active": quiet,
         "sessions_ok": status.sessions_ok,
