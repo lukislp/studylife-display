@@ -154,6 +154,19 @@ def _pending_json(app: WebApp) -> dict[str, Any] | None:
     }
 
 
+def _panel_json(settings: Settings) -> dict[str, Any]:
+    """The attached panel, read-only: it is hardware, set by DISPLAY_PANEL, never through the
+    API. `width`/`height` are the native size of what current.png shows."""
+    panel = settings.panel
+    return {
+        "key": panel.key,
+        "label": panel.label,
+        "width": panel.width,
+        "height": panel.height,
+        "colour": panel.colour,
+    }
+
+
 def _state(app: WebApp, health_report: HealthReport) -> tuple[dict[str, Any], HTTPStatus]:
     """/healthz's report plus the persisted layout choice and the current frame - the one
     call a HA integration needs to poll for a `sensor`/`camera`. The HTTP status mirrors
@@ -165,6 +178,7 @@ def _state(app: WebApp, health_report: HealthReport) -> tuple[dict[str, Any], HT
         **report,
         "layout_choice": load_layout_choice(settings),
         "current_frame": _current_frame_json(app),
+        "panel": _panel_json(settings),
     }
     return payload, status
 

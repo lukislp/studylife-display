@@ -39,7 +39,7 @@ from studylife_display.daily_clear import (
     parse_clear_at,
     save_last_clear,
 )
-from studylife_display.driver import Display, FileDisplay, WaveshareDisplay
+from studylife_display.driver import Display, FileDisplay, hardware_display
 from studylife_display.frame_fingerprint import frame_fingerprint
 from studylife_display.layouts.auto import resolve_layout, rules_from_settings
 from studylife_display.layouts.error import format_age, render_error
@@ -48,6 +48,7 @@ from studylife_display.layouts.setup import render_setup
 from studylife_display.layouts.setup import render_setup as render_setup_fingerprint
 from studylife_display.model import DashboardData, build_dashboard
 from studylife_display.panel_lock import PanelLockTimeout, panel_lock
+from studylife_display.panels import DEFAULT_PANEL, frame_for_panel
 from studylife_display.quiet_hours import in_quiet_hours, quiet_hours_end
 from studylife_display.render import render
 from studylife_display.sample import sample_extras, sample_payloads
@@ -84,8 +85,8 @@ def make_display(settings: Settings, output_override: str | None = None) -> Disp
     if output_override is not None:
         return FileDisplay(output_override)
     if settings.display_driver == "file":
-        return FileDisplay(settings.display_output_path, settings.display_rotate)
-    return WaveshareDisplay(settings.display_rotate)
+        return FileDisplay(settings.display_output_path, settings.display_rotate, settings.panel)
+    return hardware_display(settings.panel, settings.display_rotate)
 
 
 def build(snapshot: Snapshot, now: datetime, tz: ZoneInfo) -> DashboardData:
@@ -214,6 +215,7 @@ def _put_on_panel(
             stale_minutes=stale_minutes,
             rotate=settings.display_rotate,
             duo=duo,
+            panel=None if settings.panel.key == DEFAULT_PANEL else settings.panel.key,
         )
         last_drawn = _unchanged_since(
             settings, state_dir, tz, now, fingerprint, clear_first=clear_first, force=force
@@ -225,6 +227,10 @@ def _put_on_panel(
             )
             _record(state_dir, tz, last_frame_check_at=now)
             return True
+    # The layouts draw 800x480; the panel gets (and current.png keeps) its native size. A
+    # `preview` PNG stays the upright logical frame.
+    if output_override is None:
+        image = frame_for_panel(image, settings.panel)
     display = make_display(settings, output_override)
     try:
         with panel_lock(state_dir):

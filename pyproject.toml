@@ -1,7 +1,7 @@
 [project]
 name = "studylife-display"
 dynamic = ["version"]
-description = "E-paper study dashboard for StudyLife on a Raspberry Pi with the Waveshare 7.5 inch HAT V2."
+description = "E-paper study dashboard for StudyLife on a Raspberry Pi (Waveshare 7.5 inch HAT V2 by default; other Waveshare 7.5/7.3 inch panels and the Pimoroni Inky Impression 7.3 inch are supported too)."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
@@ -24,6 +24,12 @@ pi = [
     "spidev>=3.6",
     "gpiozero>=2.0",
     "lgpio>=0.2",
+]
+# Only for the Pimoroni Inky Impression 7.3 inch (DISPLAY_PANEL=inky_impression_7in3). Kept out
+# of `pi` on purpose: the `inky` library pulls in numpy, which Waveshare users do not need.
+# Install it with `pip install '.[inky]'` (on the Pi, in addition to the base install).
+inky = [
+    "inky>=2.5,<3",
 ]
 
 [project.scripts]

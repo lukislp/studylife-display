@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from studylife_display.auto_rules import parse_rule_window
 from studylife_display.daily_clear import parse_clear_at
+from studylife_display.panels import DEFAULT_PANEL, PANELS, PanelProfile, unknown_panel_message
 from studylife_display.quiet_hours import parse_quiet_hours
 
 # Length both DISPLAY_WEB_TOKEN and DISPLAY_API_TOKEN are held to: short enough to type,
@@ -219,9 +220,15 @@ class Settings(BaseSettings):
     # the StudyLife instance this was built for; "en" swaps every label.
     display_language: Language = "de"
 
-    # "waveshare" drives the real panel over SPI, "file" writes the frame as a PNG (used by
-    # `preview`, by the tests and by anyone developing without the hardware attached).
+    # "waveshare" drives the real panel, "file" writes the frame as a PNG (used by `preview`,
+    # by the tests and by anyone developing without the hardware attached). The name
+    # "waveshare" is historical and kept for existing installs: it now means "the real panel
+    # named by DISPLAY_PANEL", which may be an Inky Impression too.
     display_driver: Literal["waveshare", "file"] = "waveshare"
+    # Which panel is attached (a key of panels.PANELS). Hardware: environment / installer
+    # only, not switchable in the web interface. With the file driver it makes the PNG come
+    # out at that panel's native size, so the whole pipeline can be tried without the panel.
+    display_panel: str = DEFAULT_PANEL
     display_output_path: str = "./frame.png"
 
     # 0 or 180: the panel mounted the other way round. Applied by the driver right before
@@ -344,6 +351,18 @@ class Settings(BaseSettings):
     @classmethod
     def _layout_alias(cls, value: object) -> object:
         return _canonical_layout_value(value)
+
+    @field_validator("display_panel")
+    @classmethod
+    def _panel(cls, value: str) -> str:
+        key = value.strip().lower() or DEFAULT_PANEL
+        if key not in PANELS:
+            raise ValueError(unknown_panel_message(key))
+        return key
+
+    @property
+    def panel(self) -> PanelProfile:
+        return PANELS[self.display_panel]
 
     @field_validator("display_rotate")
     @classmethod
@@ -496,6 +515,7 @@ READONLY_FIELDS: tuple[tuple[str, str, bool], ...] = (
     ("STUDYLIFE_API_KEY", "studylife_api_key", False),
     ("STUDYLIFE_TIMEZONE", "studylife_timezone", True),
     ("DISPLAY_DRIVER", "display_driver", True),
+    ("DISPLAY_PANEL", "display_panel", True),
     ("DISPLAY_STATE_PATH", "display_state_path", True),
     ("DISPLAY_PERSIST_PATH", "display_persist_path", True),
     ("DISPLAY_STALE_ERROR_HOURS", "display_stale_error_hours", True),

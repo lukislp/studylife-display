@@ -6,7 +6,8 @@
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB)](https://www.python.org/)
 
 A study dashboard for [StudyLife](https://github.com/lukislp/studylife) on a 7.5" e-paper
-panel: a Raspberry Pi on the desk that shows, without a screen to unlock or a tab to find,
+panel (the Waveshare 7.5" HAT V2 by default; [other panels](#supported-panels) are supported
+too): a Raspberry Pi on the desk that shows, without a screen to unlock or a tab to find,
 how today is going. It reads four read-only endpoints every five minutes and redraws the
 panel; between refreshes the Pi and the panel sleep. Seven layouts are built in, an "auto"
 mode picks between them, and a small web interface on the Pi switches them from a phone,
@@ -360,18 +361,89 @@ network lists it.
 
 - Raspberry Pi 3 Model A+ (any Pi with the 40-pin header works; the 3A+ is small, fanless and
   has Wi-Fi)
-- [Waveshare 7.5inch e-Paper HAT (V2)](https://www.waveshare.com/7.5inch-e-paper-hat.htm),
-  800 x 480, black/white. The V2 is the current panel with the 24-pin FPC connector.
+- An e-paper panel, by default the
+  [Waveshare 7.5inch e-Paper HAT (V2)](https://www.waveshare.com/7.5inch-e-paper-hat.htm),
+  800 x 480, black/white. The V2 is the current panel with the 24-pin FPC connector. Other
+  panels: see [Supported panels](#supported-panels).
 - Official micro-USB power supply (5.1 V / 2.5 A); the panel draws almost nothing but the Pi
   browns out on a phone charger during Wi-Fi bursts
 - A microSD card (8 GB is plenty) and, optionally, a frame
+
+### Supported panels
+
+`DISPLAY_PANEL` names the attached panel. It is hardware: set it in the environment file; it
+is not switchable in the web interface or Home Assistant, which only show it. Without it the
+Waveshare 7.5" HAT V2 is assumed, so existing installs change nothing.
+
+| `DISPLAY_PANEL` | Panel | Native size | Colour | Status |
+| --- | --- | --- | --- | --- |
+| `waveshare_7in5_v2` (default) | Waveshare 7.5" HAT V2 | 800 x 480 | black/white | **Verified on hardware** |
+| `waveshare_7in5b_v2` | Waveshare 7.5" HAT (B) V2 | 800 x 480 | black/white/red | Implemented against the vendor source, untested on real hardware |
+| `waveshare_7in5_v1` | Waveshare 7.5" HAT V1 | 640 x 384 | black/white | Implemented against the vendor source, untested on real hardware |
+| `waveshare_7in5_hd` | Waveshare 7.5" HAT (HD) | 880 x 528 | black/white | Implemented against the vendor source, untested on real hardware |
+| `waveshare_7in3f` | Waveshare 7.3" HAT (F) | 800 x 480 | 7 colours | Implemented against the vendor source, untested on real hardware |
+| `inky_impression_7in3` | Pimoroni Inky Impression 7.3" (the editions the `inky` library detects) | 800 x 480 | 7 colours | Implemented against the vendor source, untested on real hardware |
+
+"Implemented against the vendor source" means the driver calls were written from the vendor
+library's code (the Waveshare library at the revision pinned in `uv.lock`, `inky` 2.5.0) and
+are covered by tests that use a fake vendor module; nobody has run them on the real panel
+yet. If you do, an issue with the result - good or bad - is welcome. Refresh times differ per
+model (the 7-colour panels take around half a minute for one frame).
+
+How a frame gets onto a panel:
+
+- The layouts are designed on one 800 x 480 canvas and stay that way. A panel with another
+  native size gets the frame resampled in one place (`panels.frame_for_panel`: greyscale
+  LANCZOS resize, then back to pure black/white). 640 x 384 and 880 x 528 are exactly the
+  800 x 480 canvas times 0.8 and 1.1, so nothing is distorted. Text stays legible in the
+  previews that were checked (`docs/panel-scaling/`), at 0.8x the smallest text (session
+  times in `duo` and `calendar`, the heatmap legend) being the tightest case. What does not
+  survive resampling cleanly are the hatched fills (heatmap levels, planned sessions in
+  `calendar`): at both scaled sizes the dot pattern turns into a coarser, noisier one. The
+  levels remain distinguishable, but it is not pixel-perfect like the native 800 x 480.
+- **Colour panels are driven black/white only.** The frame goes out in the panel's black and
+  white; on the red model the red plane stays blank, on the 7-colour panels only black and
+  white of the palette are used. The layouts have no accent colour yet; that is a possible
+  future option, not a promise.
+- `current.png` (the "currently on the panel" picture in the web interface) is the frame at
+  the panel's native size. `/api/state` reports the attached panel (`key`, `label`, `width`,
+  `height`, `colour`), read-only.
+- `DISPLAY_DRIVER=file` together with `DISPLAY_PANEL` writes the PNG at that panel's native
+  size, so the whole pipeline can be tried without the panel.
+- `DISPLAY_DRIVER=waveshare` is the historical name for "the real panel" and is kept for
+  existing installs; with `DISPLAY_PANEL=inky_impression_7in3` it drives the Inky.
+
+### Installing the driver for a non-default panel
+
+The Waveshare models all come with the `pi` extra. The Inky Impression needs its own
+(`inky` pulls in numpy, which the Waveshare setups do not need):
+
+```bash
+sudo /opt/studylife-display/venv/bin/pip install '/opt/studylife-display/src[inky]'
+```
+
+Then set `DISPLAY_PANEL=...` in `/etc/studylife-display.env` and restart the services. The
+installer and the update script do not know about `DISPLAY_PANEL` yet, so a panel other than
+the default is set up by hand like this.
 
 ### Wiring
 
 None to speak of: the driver board plugs onto the 40-pin header as a HAT, and the panel's
 FPC cable goes into the driver board's connector (contacts facing the board, latch closed).
 Set the driver board's switches to **B** (0.47R, the setting for the V2 panel) and **0**
-(4-line SPI). No soldering anywhere.
+(4-line SPI). No soldering anywhere. That is the wiring of the default panel; for the other
+Waveshare models follow the manual that comes with the HAT (driver board and switches differ
+per model).
+
+The **Pimoroni Inky Impression** is not a Waveshare HAT and does not use the Waveshare
+library. From the `inky` library's documentation and source: it needs both **SPI and I2C**
+enabled (`sudo raspi-config nonint do_spi 0` and `do_i2c 0`; the library reads the board's
+EEPROM over I2C to find out which Inky it is), and if it reports
+`Chip Select: (line 8, GPIO8) currently claimed by spi0 CS0` you have to add
+`dtoverlay=spi0-0cs` to `/boot/firmware/config.txt`. Its pins (reset 27, busy 17,
+data/command 22, chip select 8) are fixed in the library, not configurable here. Mounting
+and cabling are described in Pimoroni's own instructions; nothing about them is verified
+here.
 
 ## StudyLife setup
 
@@ -416,7 +488,8 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 | `STUDYLIFE_API_KEY` | – | Filled in by the connect page; or a key issued by hand. Empty until then |
 | `STUDYLIFE_TIMEZONE` | `Europe/Berlin` | Time zone of the **server**; its timestamps carry no offset |
 | `DISPLAY_LANGUAGE` | `de` | `de` or `en` (*web*) |
-| `DISPLAY_DRIVER` | `waveshare` | `waveshare` (the panel) or `file` (a PNG) |
+| `DISPLAY_DRIVER` | `waveshare` | `waveshare` (the real panel named by `DISPLAY_PANEL`; the name is historical) or `file` (a PNG) |
+| `DISPLAY_PANEL` | `waveshare_7in5_v2` | Which panel is attached, one of the keys in [Supported panels](#supported-panels); an unknown key is refused at startup. Hardware: environment only, not in the web interface |
 | `DISPLAY_OUTPUT_PATH` | `./frame.png` | Where the `file` driver writes |
 | `DISPLAY_ROTATE` | `0` | `180` when the panel is mounted upside down; applied by the driver, anything but 0/180 is refused (*web*) |
 | `DISPLAY_STATE_PATH` | `/var/lib/studylife-display/last.json` | Cached last snapshot; `settings.json`, `status.json`, `current.png`/`current.json` (the frame on the panel), `last_clear`, `update_check.json`, `panel.lock` and the short-lived `credentials.pending.json` live in the same directory |
@@ -625,7 +698,8 @@ refresh per five minutes the panel is well inside its rated lifetime and the ~5 
 non-event. Updating only the timer line with a partial refresh between full ones is a
 possible follow-up; it is deliberately not in this version.
 
-The dashboard is drawn 800 x 480 with the panel in landscape orientation. If yours is mounted
+The dashboard is drawn 800 x 480 (scaled for panels with another native size, see
+[Supported panels](#supported-panels)) with the panel in landscape orientation. If yours is mounted
 the other way round, set `DISPLAY_ROTATE=180`: the driver turns the finished frame right
 before showing it, the layouts (and their golden frames) stay upright.
 
@@ -634,6 +708,8 @@ before showing it, the layouts (and their golden frames) stay upright.
 | Symptom | Check |
 | --- | --- |
 | `No module named waveshare_epd` | The `pi` extra did not install: `sudo /opt/studylife-display/venv/bin/pip install '/opt/studylife-display/src[pi]'` |
+| `No module named inky` | `DISPLAY_PANEL=inky_impression_7in3` needs the `inky` extra: `sudo /opt/studylife-display/venv/bin/pip install '/opt/studylife-display/src[inky]'` |
+| `unknown panel '...' (DISPLAY_PANEL must be one of: ...)` | A typo in `DISPLAY_PANEL`; the message lists the valid keys |
 | `FileNotFoundError: /dev/spidev0.0` | SPI is off: `sudo raspi-config nonint do_spi 0` and reboot |
 | `Permission denied: /dev/spidev0.0` or GPIO errors | The `pi` user is not in `spi`/`gpio`: `sudo usermod -aG spi,gpio pi`, then log in again |
 | Panel stays white, service exits 0 | Driver-board switches (B / 0) and the FPC cable's orientation |
@@ -670,8 +746,8 @@ uv run ruff format --check .
 uv run mypy
 ```
 
-The `pi` extra is not installed by `uv sync` and is never imported outside
-`WaveshareDisplay.__init__`, so everything - including the render tests - runs on a laptop.
+The `pi` and `inky` extras are not installed by `uv sync` and the vendor packages are only
+imported lazily when a driver is built, so everything - including the render tests - runs on a laptop.
 `tests/golden/<layout>_<language>.png` are the reference frames; after an intentional layout
 change regenerate them with `uv run pytest --update-goldens` and commit the result together
 with the previews in `docs/` (`uv run studylife-display preview --sample --layout <key> --out

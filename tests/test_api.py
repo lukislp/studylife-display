@@ -187,6 +187,38 @@ class TestState:
         assert body["setup"] is False
         assert body["layout_choice"] == "auto"
         assert body["current_frame"] is None
+        assert body["panel"] == {
+            "key": "waveshare_7in5_v2",
+            "label": 'Waveshare 7.5" HAT V2',
+            "width": 800,
+            "height": 480,
+            "colour": "bw",
+        }
+
+    def test_state_reports_the_configured_panel_read_only(self, tmp_path: Path) -> None:
+        instance = make_server(
+            make_settings(tmp_path, display_panel="waveshare_7in5_hd"),
+            lambda: 0,
+            "127.0.0.1:0",
+        )
+        thread = threading.Thread(target=instance.serve_forever, daemon=True)
+        thread.start()
+        try:
+            client = Client(instance.server_address[1])
+            panel = client.json("GET", "/api/state")[1]["panel"]
+            assert (panel["key"], panel["width"], panel["height"]) == (
+                "waveshare_7in5_hd",
+                880,
+                528,
+            )
+            # Hardware: the settings endpoint lists it as environment-only, never as editable.
+            settings = client.json("GET", "/api/settings")[1]
+            assert settings["readonly"]["DISPLAY_PANEL"]["value"] == "waveshare_7in5_hd"
+            assert "panel" not in settings["values"]
+        finally:
+            instance.shutdown()
+            instance.server_close()
+            thread.join(timeout=5)
 
     def test_state_with_a_cache_is_ok(
         self, client: Client, settings: Settings, sample: Any, tz: ZoneInfo
