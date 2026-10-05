@@ -10,23 +10,90 @@
 # package; the environment file and the cached snapshot are left alone. The checkout is the
 # latest release tag; `--main` tracks origin/main instead (for developers). Later updates:
 # deploy/update.sh.
+#
+# `--image` is the mode the SD-card image build (image/build-image.sh) runs inside a chroot
+# of the stock Raspberry Pi OS image: nothing is started, SPI is enabled in config.txt, and
+# everything that must differ per device (TLS certificate, web token, mDNS id) is left to
+# the first-boot unit instead of being baked into the image. See image/README.md.
 set -euo pipefail
 
+USAGE="usage: sudo bash $0 [--main] [--panel KEY] [--image [--tag vX.Y.Z | --local]] [--dry-run]"
 TRACK_MAIN=0
-for arg in "$@"; do
-  case "$arg" in
+IMAGE_MODE=0
+DRY_RUN=0
+LOCAL_SRC=0
+IMAGE_TAG=""
+PANEL=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --main) TRACK_MAIN=1 ;;
+    --image) IMAGE_MODE=1 ;;
+    --local) LOCAL_SRC=1 ;;
+    --dry-run) DRY_RUN=1 ;;
+    --tag)
+      [ $# -ge 2 ] || { echo "--tag needs a value (e.g. --tag v1.3.0)" >&2; exit 1; }
+      IMAGE_TAG="$2"
+      shift
+      ;;
+    --tag=*) IMAGE_TAG="${1#--tag=}" ;;
+    --panel)
+      [ $# -ge 2 ] || { echo "--panel needs a value (e.g. --panel waveshare_7in5_v2)" >&2; exit 1; }
+      PANEL="$2"
+      shift
+      ;;
+    --panel=*) PANEL="${1#--panel=}" ;;
     -h|--help)
-      echo "usage: sudo bash $0 [--main]"
-      echo "  --main  check out origin/main instead of the latest release tag"
+      echo "$USAGE"
+      echo "  --main       check out origin/main instead of the latest release tag"
+      echo "  --panel KEY  write DISPLAY_PANEL=KEY to the env file; keys starting with inky_"
+      echo "               install the inky extra instead of pi"
+      echo "  --image      chroot/image mode (SD-card image build): no services started, no"
+      echo "               raspi-config, no per-device secrets; default panel waveshare_7in5_v2"
+      echo "  --tag TAG    with --image: install this release tag (default: the latest one)"
+      echo "  --local      with --image: install the commit of the checkout this script is in"
+      echo "               (pull-request builds, where no release tag exists yet)"
+      echo "  --dry-run    print what would be done (mode, panel, pip extra) and exit"
       exit 0
       ;;
     *)
-      echo "unknown argument: $arg (usage: sudo bash $0 [--main])" >&2
+      echo "unknown argument: $1 ($USAGE)" >&2
       exit 1
       ;;
   esac
+  shift
 done
+
+if [ "$IMAGE_MODE" -eq 0 ] && { [ -n "$IMAGE_TAG" ] || [ "$LOCAL_SRC" -eq 1 ]; }; then
+  echo "--tag and --local only make sense with --image ($USAGE)" >&2
+  exit 1
+fi
+if [ -n "$IMAGE_TAG" ] && { [ "$LOCAL_SRC" -eq 1 ] || [ "$TRACK_MAIN" -eq 1 ]; }; then
+  echo "--tag cannot be combined with --local or --main ($USAGE)" >&2
+  exit 1
+fi
+if [ "$IMAGE_MODE" -eq 1 ] && [ -z "$PANEL" ]; then
+  PANEL=waveshare_7in5_v2
+fi
+case "$PANEL" in
+  *[!a-z0-9_]*)
+    echo "invalid --panel value: $PANEL (lower-case letters, digits and underscores only)" >&2
+    exit 1
+    ;;
+esac
+# The pip extra that carries the panel's driver: Inky Impression boards use Pimoroni's
+# library (the `inky` extra), everything else the Waveshare one (the `pi` extra).
+PIP_EXTRA=pi
+case "$PANEL" in
+  inky_*) PIP_EXTRA=inky ;;
+esac
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "mode:      $([ "$IMAGE_MODE" -eq 1 ] && echo image || echo normal)"
+  echo "panel:     ${PANEL:-<unchanged>}"
+  echo "pip extra: $PIP_EXTRA"
+  echo "source:    $(if [ -n "$IMAGE_TAG" ]; then echo "tag $IMAGE_TAG"; elif [ "$LOCAL_SRC" -eq 1 ]; then echo "local checkout"; elif [ "$TRACK_MAIN" -eq 1 ]; then echo "origin/main"; else echo "latest release tag"; fi)"
+  exit 0
+fi
 
 REPO_URL="${REPO_URL:-https://github.com/lukislp/studylife-display.git}"
 PREFIX=/opt/studylife-display
@@ -34,7 +101,18 @@ SRC="$PREFIX/src"
 VENV="$PREFIX/venv"
 ENV_FILE=/etc/studylife-display.env
 STATE_DIR=/var/lib/studylife-display
-SERVICE_USER="${SERVICE_USER:-pi}"
+# A stock Raspberry Pi OS image has no `pi` user any more (the person flashing it chooses the
+# account in the Imager), so the image runs the services as a dedicated system account.
+if [ "$IMAGE_MODE" -eq 1 ]; then
+  SERVICE_USER="${SERVICE_USER:-studylife-display}"
+elif [ -z "${SERVICE_USER:-}" ] && ! id -u pi >/dev/null 2>&1      && id -u studylife-display >/dev/null 2>&1; then
+  # Re-running the installer on a system made from the SD-card image: its services run as
+  # the image's service account (a system without `pi` could not have used the default).
+  SERVICE_USER=studylife-display
+else
+  SERVICE_USER="${SERVICE_USER:-pi}"
+fi
+BOOT_DIR="${BOOT_DIR:-/boot/firmware}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "run with sudo: sudo bash $0" >&2
@@ -44,18 +122,66 @@ fi
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "==> system packages (Pillow runtime, git, venv, lgpio build/runtime)"
+if [ "$IMAGE_MODE" -eq 1 ]; then
+  export DEBIAN_FRONTEND=noninteractive
+fi
 apt-get update
 # swig and liblgpio-dev are needed to build the `lgpio` Python package's C extension (it has
 # no prebuilt wheel for this platform); liblgpio-dev pulls in the liblgpio1 runtime library.
 apt-get install -y python3-venv python3-pip git libopenjp2-7 fonts-dejavu-core swig liblgpio-dev \
   openssl
 
-echo "==> enabling SPI (the HAT is driven over SPI0)"
-raspi-config nonint do_spi 0
+# Sets one dtparam/dtoverlay line in config.txt, idempotently: kept when already present,
+# a commented-out stock line is switched on, otherwise it is appended. The lines passed in
+# are plain [a-z0-9_=] text, so they can safely stand in as sed patterns.
+config_txt_enable() {
+  local file="$1" line="$2"
+  if grep -qx "$line" "$file"; then
+    return 0
+  elif grep -qx "#[[:space:]]*$line" "$file"; then
+    sed -i "s/^#[[:space:]]*$line\$/$line/" "$file"
+  else
+    printf '%s\n' "$line" >> "$file"
+  fi
+}
+
+if [ "$IMAGE_MODE" -eq 1 ]; then
+  echo "==> enabling SPI in $BOOT_DIR/config.txt (no raspi-config in a chroot)"
+  [ -f "$BOOT_DIR/config.txt" ] || { echo "no $BOOT_DIR/config.txt - is the boot partition mounted?" >&2; exit 1; }
+  config_txt_enable "$BOOT_DIR/config.txt" "dtparam=spi=on"
+  case "$PANEL" in
+    inky_*)
+      # Pimoroni's documented requirements for the Inky Impression: I2C (the board's EEPROM
+      # identifies the panel) and SPI with the chip-select handled by the library.
+      config_txt_enable "$BOOT_DIR/config.txt" "dtparam=i2c_arm=on"
+      config_txt_enable "$BOOT_DIR/config.txt" "dtoverlay=spi0-0cs"
+      ;;
+  esac
+else
+  echo "==> enabling SPI (the HAT is driven over SPI0)"
+  raspi-config nonint do_spi 0
+fi
+
+if [ "$IMAGE_MODE" -eq 1 ]; then
+  echo "==> service account $SERVICE_USER (system user, no login, SPI/GPIO access)"
+  # The groups normally come with Raspberry Pi OS (udev rules grant them the device nodes);
+  # creating them when absent is harmless and keeps the units' SupplementaryGroups= valid.
+  for group in spi gpio; do
+    getent group "$group" >/dev/null || groupadd --system "$group"
+  done
+  if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+    useradd --system --user-group --no-create-home --home-dir /nonexistent \
+      --shell /usr/sbin/nologin --groups spi,gpio "$SERVICE_USER"
+  fi
+fi
 
 TLS_CERT=/etc/studylife-display-tls.pem
 TLS_KEY=/etc/studylife-display-tls.key
-if [ ! -f "$TLS_CERT" ] || [ ! -f "$TLS_KEY" ]; then
+if [ "$IMAGE_MODE" -eq 1 ]; then
+  # A private key in the image would be shared by every card flashed from it; the first-boot
+  # unit generates one per device (and with the hostname the person chose in the Imager).
+  echo "==> TLS certificate: left to the first boot (image mode)"
+elif [ ! -f "$TLS_CERT" ] || [ ! -f "$TLS_KEY" ]; then
   echo "==> self-signed TLS certificate for DISPLAY_TLS=true ($TLS_CERT)"
   # Not for trust (it is self-signed; browsers show the interstitial once regardless) - only
   # for StudyLife's redirect-URI policy, which accepts https from anywhere but plain http
@@ -89,6 +215,18 @@ git -C "$SRC" fetch --tags --prune origin
 if [ "$TRACK_MAIN" -eq 1 ]; then
   echo "    tracking origin/main (--main)"
   git -C "$SRC" checkout --force --quiet -B main origin/main
+elif [ -n "$IMAGE_TAG" ]; then
+  git -C "$SRC" rev-parse -q --verify "refs/tags/$IMAGE_TAG^{commit}" >/dev/null \
+    || { echo "no such release tag: $IMAGE_TAG" >&2; exit 1; }
+  echo "    release $IMAGE_TAG (--tag)"
+  git -C "$SRC" checkout --force --detach --quiet "$IMAGE_TAG"
+elif [ "$LOCAL_SRC" -eq 1 ]; then
+  # Pull-request builds: the commit this script was started from, which no tag points at.
+  LOCAL_REV="$(git -C "$HERE" rev-parse HEAD)"
+  echo "    local checkout $LOCAL_REV (--local)"
+  # A re-run finds the clone from the first one, which may predate this commit.
+  git -C "$SRC" fetch --quiet "$HERE" "$LOCAL_REV"
+  git -C "$SRC" checkout --force --detach --quiet "$LOCAL_REV"
 else
   # The newest vX.Y.Z tag; the version the package reports comes from it (hatch-vcs).
   RELEASE_TAG="$(git -C "$SRC" tag --list 'v*' --sort=-version:refname | head -n 1)"
@@ -114,7 +252,26 @@ fi
 # e-Paper repo, so the clone fails part-way with "unable to write file" for unrelated files.
 # Point it at the real disk instead; $PREFIX is created above and has room to spare.
 mkdir -p "$PREFIX/tmp"
-TMPDIR="$PREFIX/tmp" "$VENV/bin/pip" install --upgrade "$SRC[pi]"
+if [ -n "$IMAGE_TAG" ]; then
+  # A release image reports exactly its tag, whatever state the tree is in (hatch-vcs reads
+  # this variable for the distribution `studylife-display`).
+  export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_STUDYLIFE_DISPLAY="${IMAGE_TAG#v}"
+fi
+if [ "$IMAGE_MODE" -eq 1 ] && [ -n "$(git -C "$SRC" status --porcelain)" ]; then
+  # Never install from a dirty checkout: it would report a .dev version and not be the tag.
+  echo "the checkout at $SRC is not clean:" >&2
+  git -C "$SRC" status --porcelain >&2
+  exit 1
+fi
+if [ "$PIP_EXTRA" != "pi" ] && ! grep -Eq "^${PIP_EXTRA}[[:space:]]*=" "$SRC/pyproject.toml"; then
+  echo "this release has no $PIP_EXTRA extra (needed by --panel $PANEL); use a newer release" >&2
+  exit 1
+fi
+if [ "$IMAGE_MODE" -eq 1 ]; then
+  # Nothing pip downloads should end up cached inside the image.
+  export PIP_NO_CACHE_DIR=1
+fi
+TMPDIR="$PREFIX/tmp" "$VENV/bin/pip" install --upgrade "${SRC}[$PIP_EXTRA]"
 rm -rf "$PREFIX/tmp"
 
 echo "==> state directory $STATE_DIR"
@@ -127,7 +284,10 @@ echo "==> boot-partition copy of the layout choice"
 # The package default is the Bookworm path; anything else is written into the env file.
 DEFAULT_PERSIST_PATH=/boot/firmware/studylife-display/settings.json
 PERSIST_PATH=""
-if mountpoint -q /boot/firmware; then
+if [ "$IMAGE_MODE" -eq 1 ]; then
+  # The finished card always has the Bookworm/Trixie layout; a chroot cannot tell by mounts.
+  PERSIST_PATH="$DEFAULT_PERSIST_PATH"
+elif mountpoint -q /boot/firmware; then
   PERSIST_PATH=/boot/firmware/studylife-display/settings.json
 elif mountpoint -q /boot; then
   echo "    warning: /boot/firmware is not a mount (older OS?), using /boot instead"
@@ -151,11 +311,19 @@ suggest_token() {
   fi
 }
 
+if [ "$IMAGE_MODE" -eq 1 ]; then
+  HAVE_TTY=0
+elif [ -t 0 ]; then
+  HAVE_TTY=1
+else
+  HAVE_TTY=0
+fi
+
 if [ ! -f "$ENV_FILE" ]; then
   echo "==> writing template $ENV_FILE (fill in the key!)"
   PLACEHOLDER_URL="https://studylife.example.com"
   STUDYLIFE_URL="$PLACEHOLDER_URL"
-  if [ -t 0 ]; then
+  if [ "$HAVE_TTY" -eq 1 ]; then
     echo
     echo "StudyLife instance URL (the server this display reads from):"
     while :; do
@@ -173,9 +341,12 @@ if [ ! -f "$ENV_FILE" ]; then
   # The web interface's access token is chosen by the person installing, never by the
   # code: suggest a random one, let Enter accept it or a typed value replace it, and never
   # print the final value back (it goes into the root-owned env file only).
-  SUGGESTED="$(suggest_token)"
+  SUGGESTED=""
   WEB_TOKEN=""
-  if [ -t 0 ]; then
+  if [ "$IMAGE_MODE" -eq 0 ]; then
+    SUGGESTED="$(suggest_token)"
+  fi
+  if [ "$HAVE_TTY" -eq 1 ]; then
     echo
     echo "The web interface (http://$(hostname).local:8795/) asks for an access token."
     echo "Press Enter to use the suggested one, or type your own (at least 12 characters):"
@@ -189,7 +360,7 @@ if [ ! -f "$ENV_FILE" ]; then
       fi
       echo "too short - at least 12 characters, please"
     done
-  else
+  elif [ "$IMAGE_MODE" -eq 0 ]; then
     # No terminal (unattended install): take the suggestion; it is in the env file.
     WEB_TOKEN="$SUGGESTED"
   fi
@@ -249,8 +420,18 @@ EOF
     if [ "$PERSIST_PATH" != "$DEFAULT_PERSIST_PATH" ]; then
       printf 'DISPLAY_PERSIST_PATH=%s\n' "$PERSIST_PATH"
     fi
-    printf 'DISPLAY_WEB_TOKEN=%s
+    if [ -n "$PANEL" ]; then
+      printf 'DISPLAY_PANEL=%s
+' "$PANEL"
+    fi
+    if [ "$IMAGE_MODE" -eq 1 ]; then
+      # No token in the image: every card would share it. The first boot picks the one the
+      # person put into the boot partition's setup.env, or generates one.
+      echo "# DISPLAY_WEB_TOKEN is set by studylife-display-firstboot.service on the first boot."
+    else
+      printf 'DISPLAY_WEB_TOKEN=%s
 ' "$WEB_TOKEN"
+    fi
   } > "$ENV_FILE"
   unset WEB_TOKEN SUGGESTED
   chown root:"$SERVICE_USER" "$ENV_FILE"
@@ -260,6 +441,14 @@ else
   if ! grep -q '^DISPLAY_WEB_TOKEN=' "$ENV_FILE"; then
     echo "    note: it has no DISPLAY_WEB_TOKEN yet - the web interface will refuse to start"
     echo "    until you add one (at least 12 characters), e.g. DISPLAY_WEB_TOKEN=$(suggest_token)"
+  fi
+  if [ -n "$PANEL" ]; then
+    if grep -q '^DISPLAY_PANEL=' "$ENV_FILE"; then
+      sed -i "s/^DISPLAY_PANEL=.*/DISPLAY_PANEL=$PANEL/" "$ENV_FILE"
+    else
+      printf 'DISPLAY_PANEL=%s\n' "$PANEL" >> "$ENV_FILE"
+    fi
+    echo "    DISPLAY_PANEL=$PANEL (--panel)"
   fi
   # The only line ever added to an existing env file: a non-default persist path, once.
   if [ "$PERSIST_PATH" != "$DEFAULT_PERSIST_PATH" ] \
@@ -272,7 +461,13 @@ fi
 echo "==> mDNS advertisement (lets Home Assistant discover the display)"
 # One DNS-SD service next to the <hostname>.local name avahi already answers; skipped with a
 # log line when avahi is not installed, and never a reason to fail the install.
-bash "$SRC/deploy/avahi-service.sh" || echo "    note: the mDNS advertisement could not be written"
+if [ "$IMAGE_MODE" -eq 1 ]; then
+  # It carries the display's instance id, derived from /etc/machine-id: the first boot
+  # writes it on the device itself, so no two cards advertise the same id.
+  echo "    left to the first boot (image mode)"
+else
+  bash "$SRC/deploy/avahi-service.sh" || echo "    note: the mDNS advertisement could not be written"
+fi
 
 echo "==> systemd units"
 install -m 0644 "$SRC/deploy/studylife-display.service" /etc/systemd/system/
@@ -285,6 +480,28 @@ install -m 0644 "$SRC/deploy/studylife-display-credentials.service" /etc/systemd
 install -m 0644 "$SRC/deploy/studylife-display-credentials.path" /etc/systemd/system/
 install -m 0644 "$SRC/deploy/studylife-display-update.service" /etc/systemd/system/
 install -m 0644 "$SRC/deploy/studylife-display-update.timer" /etc/systemd/system/
+if [ "$IMAGE_MODE" -eq 1 ]; then
+  # First-boot step (certificate, web token, setup.env import, mDNS file), see image/README.md.
+  install -m 0644 "$SRC/image/firstboot/studylife-display-firstboot.service" /etc/systemd/system/
+  # The commented template the person can fill in from a PC (instance URL, web token, panel).
+  if [ ! -f "$BOOT_DIR/studylife-display/setup.env" ]; then
+    mkdir -p "$BOOT_DIR/studylife-display"
+    cp "$SRC/image/firstboot/setup.env.template" "$BOOT_DIR/studylife-display/setup.env"
+  fi
+  # The units name `User=pi`; the image has no such user. Drop-ins survive update.sh, which
+  # only replaces the unit files themselves.
+  for unit in studylife-display.service studylife-display-web.service; do
+    install -d -m 0755 "/etc/systemd/system/$unit.d"
+    printf '[Service]\nUser=%s\n' "$SERVICE_USER" > "/etc/systemd/system/$unit.d/10-service-user.conf"
+  done
+  # Enabled by symlink only: nothing is started inside a chroot, the units run on the first boot.
+  systemctl enable studylife-display-firstboot.service studylife-display-restore.service \
+    studylife-display-persist.path studylife-display-credentials.path studylife-display.timer \
+    studylife-display-update.timer studylife-display-web.service
+  echo
+  echo "Image install done (panel $PANEL). Nothing was started; the units run on the first boot."
+  exit 0
+fi
 systemctl daemon-reload
 # Restore first (a stored choice from before this run, e.g. after a reflash), then the units
 # that read it. `restart` runs the oneshot again on a re-run; it is a no-op when the state
