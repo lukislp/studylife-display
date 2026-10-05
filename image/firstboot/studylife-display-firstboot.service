@@ -1,0 +1,33 @@
+[Unit]
+Description=StudyLife e-paper dashboard (per-device setup on boot: TLS certificate, web token, setup.env, mDNS)
+Documentation=https://github.com/lukislp/studylife-display
+# Image builds only (deploy/install.sh --image installs it). It runs on every boot but is
+# idempotent: each step does nothing once its result exists, so a re-run costs milliseconds.
+# Ordered after cloud-init's first stage so the hostname chosen in Raspberry Pi Imager is set
+# before the certificate is issued for <hostname>.local; the names of units that do not
+# exist on a given system are ignored by systemd.
+After=local-fs.target cloud-init-local.service cloud-init-main.service cloud-init-network.service cloud-init.service
+Before=studylife-display-restore.service studylife-display-web.service studylife-display.timer
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/bash /opt/studylife-display/src/image/firstboot/firstboot.sh
+
+# Hardening like the other root units: it may write the environment file and the certificate
+# in /etc, the state directory, the boot partition's setup files and avahi's service
+# directory - nothing else. No network, no devices.
+ProtectSystem=strict
+ReadWritePaths=/etc /var/lib/studylife-display -/boot/firmware
+PrivateTmp=yes
+PrivateNetwork=yes
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
