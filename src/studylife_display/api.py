@@ -352,6 +352,8 @@ def handle(
 
     if method == "POST" and path == "/api/connect/start":
         pending = app.begin_connect()
+        if pending is None:
+            return _error(HTTPStatus.CONFLICT, "no_server")
         return _json(
             HTTPStatus.OK,
             {
