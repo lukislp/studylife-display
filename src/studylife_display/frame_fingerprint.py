@@ -28,9 +28,12 @@ def frame_fingerprint(
     stale_minutes: int,
     rotate: int,
     duo: tuple[str, str] | None = None,
+    panel: str | None = None,
 ) -> str:
     """sha256 hex of the upright 1-bit frame (header update text blanked for dashboards)
-    plus everything else that decides what the panel shows. Pure: `image` is not modified."""
+    plus everything else that decides what the panel shows. `panel` is the key of a non-default
+    panel (None for the default one, so existing fingerprints stay valid): swapping the
+    hardware must never be mistaken for "the same picture". Pure: `image` is not modified."""
     frame = image.convert("1")
     if kind == DASHBOARD_KIND:
         left, top, right, bottom = HEADER_UPDATED_BOX
@@ -46,6 +49,7 @@ def frame_fingerprint(
             ",".join(duo) if duo is not None and layout == "duo" else "",
             f"{frame.width}x{frame.height}",
         ]
+        + ([f"panel={panel}"] if panel else [])
     )
     digest = hashlib.sha256()
     digest.update(meta.encode("utf-8"))
