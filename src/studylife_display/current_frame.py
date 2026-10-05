@@ -37,6 +37,10 @@ class CurrentFrame:
     shown_at: datetime
     layout: str | None
     kind: str
+    # Internal (see frame_fingerprint.py): never part of as_json(), so /api/state is
+    # unchanged. None for a current.json written before the field existed, which always
+    # counts as "different" and draws.
+    fingerprint: str | None = None
 
     def as_json(self) -> dict[str, Any]:
         return {"shown_at": self.shown_at.isoformat(), "layout": self.layout, "kind": self.kind}
@@ -57,7 +61,12 @@ def _atomic_write(path: Path, write: Any) -> None:
 
 
 def save_current_frame(
-    state_dir: Path, image: Image.Image, shown_at: datetime, layout: str | None, kind: str
+    state_dir: Path,
+    image: Image.Image,
+    shown_at: datetime,
+    layout: str | None,
+    kind: str,
+    fingerprint: str | None = None,
 ) -> None:
     """Stores `image` (upright) and its metadata; the PNG first, so the metadata never
     describes a picture that is not there yet. Raises OSError like the other stores."""
@@ -65,7 +74,10 @@ def save_current_frame(
         raise ValueError(f"unknown frame kind {kind!r} (known: {', '.join(sorted(KINDS))})")
     state_dir.mkdir(parents=True, exist_ok=True)
     _atomic_write(current_png_path(state_dir), lambda tmp: image.save(tmp, format="PNG"))
-    payload = json.dumps(CurrentFrame(shown_at, layout, kind).as_json())
+    record = CurrentFrame(shown_at, layout, kind).as_json()
+    if fingerprint is not None:
+        record["fingerprint"] = fingerprint
+    payload = json.dumps(record)
     _atomic_write(
         current_json_path(state_dir), lambda tmp: tmp.write_text(payload, encoding="utf-8")
     )
@@ -93,10 +105,12 @@ def load_current_frame(state_dir: Path, tz: ZoneInfo) -> CurrentFrame | None:
         shown_at = shown_at.replace(tzinfo=tz)
     layout = raw.get("layout")
     kind = raw.get("kind")
+    fingerprint = raw.get("fingerprint")
     return CurrentFrame(
         shown_at=shown_at.astimezone(tz),
         layout=layout if isinstance(layout, str) else None,
         kind=kind if isinstance(kind, str) and kind in KINDS else DASHBOARD,
+        fingerprint=fingerprint if isinstance(fingerprint, str) and fingerprint else None,
     )
 
 

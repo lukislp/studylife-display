@@ -27,6 +27,12 @@ MARGIN = 24
 HEADER_BASELINE = 40
 RULE_Y = 54
 
+# The header's right-hand "updated HH:MM [· vor N min]" text lives inside this (left, top,
+# right, bottom) box: right-aligned at its right edge minus MARGIN, clear of the left text
+# and of the rule. The frame fingerprint blanks exactly this box, because the fetch time
+# changes on every refresh although nothing else did.
+HEADER_UPDATED_BOX = (WIDTH // 2, 0, WIDTH, RULE_Y - 4)
+
 Language = Literal["de", "en"]
 
 # Only lookups happen on these tables: the code never branches on the language itself.
@@ -504,7 +510,13 @@ def draw_header(
     right = t["updated"].format(time=data.fetched_at.strftime("%H:%M"))
     if data.stale_minutes > 0:
         right += " " + t["stale"].format(minutes=data.stale_minutes)
-    draw_text(draw, (WIDTH - MARGIN, HEADER_BASELINE), right, fonts.small, anchor="rs")
+    draw_text(
+        draw,
+        (HEADER_UPDATED_BOX[2] - MARGIN, HEADER_BASELINE),
+        right,
+        fonts.small,
+        anchor="rs",
+    )
 
     draw.line([(MARGIN, RULE_Y), (WIDTH - MARGIN, RULE_Y)], fill=BLACK, width=2)
 
