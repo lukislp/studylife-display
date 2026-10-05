@@ -252,6 +252,17 @@ fi
 # e-Paper repo, so the clone fails part-way with "unable to write file" for unrelated files.
 # Point it at the real disk instead; $PREFIX is created above and has room to spare.
 mkdir -p "$PREFIX/tmp"
+if [ -n "$IMAGE_TAG" ]; then
+  # A release image reports exactly its tag, whatever state the tree is in (hatch-vcs reads
+  # this variable for the distribution `studylife-display`).
+  export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_STUDYLIFE_DISPLAY="${IMAGE_TAG#v}"
+fi
+if [ "$IMAGE_MODE" -eq 1 ] && [ -n "$(git -C "$SRC" status --porcelain)" ]; then
+  # Never install from a dirty checkout: it would report a .dev version and not be the tag.
+  echo "the checkout at $SRC is not clean:" >&2
+  git -C "$SRC" status --porcelain >&2
+  exit 1
+fi
 if [ "$PIP_EXTRA" != "pi" ] && ! grep -Eq "^${PIP_EXTRA}[[:space:]]*=" "$SRC/pyproject.toml"; then
   echo "this release has no $PIP_EXTRA extra (needed by --panel $PANEL); use a newer release" >&2
   exit 1
