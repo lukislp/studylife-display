@@ -136,6 +136,13 @@ when that is set, else `http://<hostname>.local:<port>/connect` from the Pi's ho
 `DISPLAY_WEB_BIND`. The first refresh after the key is applied replaces it with the
 dashboard. A key that *is* configured but rejected still gets the "rejected" screen above.
 
+With **no server configured either** (`STUDYLIFE_BASE_URL` empty and none chosen in the web
+interface) the same screen says "StudyLife-Server wählen unter:" / "Choose your StudyLife
+server at:" and points at the web interface's server page (`/server` on the same origin the
+connect URL would use), again with the QR code. Same rules otherwise: exit 0, nothing is
+fetched, `/healthz` says `"status": "setup"` with `"server_configured": false`. See
+[Finding your StudyLife server](#finding-your-studylife-server).
+
 ## Web interface
 
 `studylife-display serve` runs a small site on the Pi (port **8795**, `DISPLAY_WEB_BIND`)
@@ -250,7 +257,8 @@ values (instance URL, key and token as set/not set, time zone, paths, bind addre
 read-only and carries nothing secret) with JSON for an uptime monitor:
 
 ```json
-{"status": "ok", "setup": false, "version": "1.3.0", "id": "9f2c4e1ab07d3856",
+{"status": "ok", "setup": false, "server_configured": true, "version": "1.3.0",
+ "id": "9f2c4e1ab07d3856",
  "last_fetch_at": "2026-09-17T16:45:00+02:00",
  "last_fetch_ok": true, "stale_minutes": 3, "last_error": null,
  "last_panel_update_at": "2026-09-17T16:45:04+02:00",
@@ -260,7 +268,7 @@ read-only and carries nothing secret) with JSON for an uptime monitor:
 
 | `status` | HTTP | Meaning |
 | --- | --- | --- |
-| `setup` | 200 | No API key is configured yet; the panel shows the [setup screen](#setup-screen) (`setup` is `true`) |
+| `setup` | 200 | No server is chosen or no API key is configured yet; the panel shows the [setup screen](#setup-screen) (`setup` is `true`; `server_configured` says whether the server is the missing part) |
 | `ok` | 200 | The last fetch succeeded and the snapshot is fresh |
 | `degraded` | 200 | The last fetch failed and the cached dashboard (or the stale screen) is shown, or the snapshot is older than 15 minutes outside quiet hours - the timer is not running |
 | `error` | 503 | The key was rejected, or there is no data at all |
@@ -304,7 +312,7 @@ second, separate opt-in from the web interface:
 
 | Route | Method | What it does |
 | --- | --- | --- |
-| `/api/state` | GET | `/healthz`'s report plus `layout_choice` (the persisted preference) and `current_frame` (what is on the panel right now: `shown_at`, `layout`, `kind`). Same HTTP status as `/healthz` (503 for `"error"`). |
+| `/api/state` | GET | `/healthz`'s report plus `layout_choice` (the persisted preference), `server` (as in `/api/discovery`) and `current_frame` (what is on the panel right now: `shown_at`, `layout`, `kind`). Same HTTP status as `/healthz` (503 for `"error"`). |
 | `/api/layouts` | GET | `{"choice", "resolved", "duo", "pseudo", "options", "panes"}` - the layout picker as data: the persisted choice, what `auto` would draw right now, the duo pair as a list of keys, the pseudo choice and the layouts as `[{"key", "name": {"de","en"}, "description": {"de","en"}}, ...]`, and the keys that can be a duo half. |
 | `/api/layout` | POST | `{"layout": "focus"}` - saves the choice and refreshes the panel, like "Apply"/"Übernehmen". Optionally in the same call `"duo": ["year", "month"]` (a list of keys or the comma string), validated like the settings. `{"outcome": "refreshed"\|"failed"}`; an unknown key or pair is a 400 and nothing is written. |
 | `/api/refresh` | POST | Refreshes without changing the layout; `{"outcome": ...}` like above. |
@@ -313,8 +321,11 @@ second, separate opt-in from the web interface:
 | `/api/settings` | GET | `{"values", "sources", "readonly"}` - the settings page's fields, which key came from `settings.json` vs. the environment, and the environment-only fields as `{"set": bool, "value": str\|null}` (a secret such as the API key or either token is `"set"` only, never shown). |
 | `/api/settings` | POST | A JSON object with any subset of `language`, `rotate`, `quiet_hours`, `clear_at`, `update_check`, `auto_review`, `auto_agenda`, `auto_tomorrow`, `auto_quiet`, `auto_recap_minutes` (an integer, 0 to 240), `skip_unchanged` (a boolean), `redraw_after_minutes` (an integer, 0 to 1440), `duo` (the last one as a comma string or a list of keys) - unlike the web form (which always resubmits every field), an omitted key is left untouched and an explicit `null` resets that one key to the environment value. Validated with the same rules as the environment; an invalid value or an unknown field is a 400 and nothing is written. |
 | `/api/settings/reset` | POST | Resets every settings.json field to the environment values, like "Reset"/"Auf Umgebungswerte zurücksetzen". |
+| `/api/discovery` | GET | `{"server", "locked", "last_search"}` - read-only, never searches. `server` is `{"url", "source": "env"\|"store"\|"none", "id", "version"}` (`url` is `""` and `id`/`version` are `null` while unknown), `locked` is `true` when `STUDYLIFE_BASE_URL` fixes the server, `last_search` is `null` until a search ran, then `{"servers": [{"name", "url", "id", "version", "https"}], "ignored": <count>, "searched_at": <unix time>}`. |
+| `/api/discovery/search` | POST | Runs one network search (a few seconds), keeps it and answers like `GET /api/discovery`. Changes nothing. 409 `search_running` while another one runs, 409 `server_fixed_by_environment` when `STUDYLIFE_BASE_URL` is set. |
+| `/api/server` | POST | `{"url": "https://studylife.example.org", "id": "<32 hex>"}` (`id` optional, e.g. copied from a search result) - makes that server the display's, like "Use this one". The URL is validated, the server is asked for its instance id (a given `id` has to match it), the old server's cached data and connect attempt are dropped, the panel is refreshed. `{"outcome": "saved"\|"saved_unverified", "refresh", "server"}`; 400 `invalid_url`, 409 `instance_id_mismatch` / `server_fixed_by_environment`, 502 `unreachable`. |
 | `/api/connect` | GET | `{"identity", "pending", "overlay_warning", "mode", "redirect_uri", "client_id", "scopes"}` - the connect page's state as data. `identity` is `{"connected": bool, "instance", "user_id", "credential", "error"}` from `GET /api/auth/whoami`. |
-| `/api/connect/start` | POST | Begins a connect attempt, like "Start connecting"; returns `{"connect_url", "redirect_uri", "expires_at"}`. |
+| `/api/connect/start` | POST | Begins a connect attempt, like "Start connecting"; returns `{"connect_url", "redirect_uri", "expires_at"}`; 409 `no_server` while no server is chosen. |
 | `/api/connect/paste` | POST | `{"callback_url": "..."}` - redeems the pasted callback address, like the paste form; `{"outcome": ...}` (`"applied"` on success, plus `"detail"` on most failures). |
 
 `/api/layout` and `/api/settings` are still layered on the same `settings.json` and the
@@ -445,6 +456,60 @@ data/command 22, chip select 8) are fixed in the library, not configurable here.
 and cabling are described in Pimoroni's own instructions; nothing about them is verified
 here.
 
+## Finding your StudyLife server
+
+`STUDYLIFE_BASE_URL` is optional. A display that has no server yet can look for one on the
+local network, so a freshly flashed SD card needs no address typed anywhere.
+
+**What is announced.** A StudyLife server (3.22 and newer) can announce itself over mDNS /
+DNS-SD as the service `_studylife._tcp.local.`; the instance name is the server's configured
+name, the TXT records are `version`, `url` (the advertised base URL, scheme + host[:port]),
+`https` (`true`/`false`), `path` (`/`) and `id` (the stable 32-hex instance id, which may be
+missing for a moment after the server started). The announcement is **opt-in on the server
+side and off by default**; how to switch it on (plain Docker with host networking,
+docker-compose, a `hostNetwork` pod on Kubernetes) is in the StudyLife server's
+`docs/MDNS.md` (repository `lukislp/studylife`). The Home Assistant integration reads the
+same announcement.
+
+**Using it.** Open the web interface's *Server* page, press *Im Netzwerk suchen* / *Search the
+network* (a few seconds), then *Diesen verwenden* / *Use this one* next to your server. The
+panel switches to the connect screen and the usual [connecting step](#connecting-the-account)
+follows. The page also has a field for typing the address by hand (`https://...` or
+`http://...`, no path, no credentials in it); that is the fallback when nothing is announced,
+and the only way for servers older than 3.22. The same is available through the JSON API
+(`/api/discovery`, `/api/discovery/search`, `/api/server`). The choice is stored in
+`settings.json` (`server_url`, `server_id`) and mirrored to the boot partition like the layout
+choice. A display with `STUDYLIFE_BASE_URL` set keeps using exactly that, as before; the
+page then shows it as read-only.
+
+**Security model.** Anyone on the LAN can announce a fake `_studylife._tcp`, so an
+announcement is only ever a *proposal*: discovery never connects an account, never sends a
+credential and never changes the configured server by itself - only an explicit click (or an
+authenticated API call) does, and the account is still obtained solely through the connect
+flow against the server that was picked. Before a proposal is shown it is validated (absolute
+http/https URL, no credentials, path, query or fragment) and verified by an anonymous
+`GET <url>/api/instance`, which has to answer with the same instance id as the announcement
+(no redirects are followed); anything else is dropped and only counted. An announced server
+that is not reachable from the display is dropped too, since it could not be used anyway.
+
+**Keys belong to one server.** `credentials-apply` records which server issued the key
+(`STUDYLIFE_API_KEY_INSTANCE`, next to `STUDYLIFE_API_KEY`) when the server is not set in the
+environment. Whenever the chosen server differs from that one - for example after switching to
+another server - the stored key is simply not used, so the old server's key can never be
+sent to the new one; the account has to be connected again. (With `STUDYLIFE_BASE_URL` set
+nothing changes: the key is used as before.) A server that moved to a new address is *not*
+followed automatically: an instance id is public, so letting an announcement with the same id
+take over a stored key would hand that key to anyone who copies the id. Search again and
+choose the new address.
+
+**VLANs.** mDNS is link-local multicast and does not cross VLANs or subnets by itself: keep
+the display and the announcing host in one VLAN, or let the router reflect mDNS between them
+(on UniFi set the mDNS option to *Auto* or add `_studylife._tcp` as a custom service; other
+routers call it an mDNS reflector, repeater or Avahi reflector). Nothing found although the
+server says it announces: check that, and that UDP 5353 multicast is not filtered. Without
+multicast on the display (for example a container on a bridge network) a search simply finds
+nothing.
+
 ## StudyLife setup
 
 Register the display as a client on your StudyLife instance through
@@ -473,7 +538,7 @@ them (every key from before the layout that needs it existed) still drives every
 layout - the missing payload is treated as empty, the refresh logs a warning, the layout
 that needs it says which scope is missing, and for the session list `/healthz` and the
 layouts page say so too (`sessions_ok`). To get those layouts, add the scopes to the client
-in studylife-developers and connect again so that a key with all seven scopes is issued. Then put the instance URL into `/etc/studylife-display.env` and connect
+in studylife-developers and connect again so that a key with all seven scopes is issued. Then choose the server (on the *Server* page, see [Finding your StudyLife server](#finding-your-studylife-server), or by putting the instance URL into `/etc/studylife-display.env`) and connect
 from the web interface (`http://<hostname>.local:8795/connect`, see
 [Connecting the account](#connecting-the-account)); the key lands in the environment file
 by itself. Issuing a key by hand in studylife-developers and pasting it into
@@ -484,8 +549,9 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `STUDYLIFE_BASE_URL` | – | Your instance, e.g. `https://studylife.example.com` |
+| `STUDYLIFE_BASE_URL` | – | Optional: your instance, e.g. `https://studylife.example.com`. Empty = no server yet: the panel shows the "choose your server" screen and the web interface's *Server* page searches the network ([Finding your StudyLife server](#finding-your-studylife-server)). When set it always wins over a server chosen in the web interface |
 | `STUDYLIFE_API_KEY` | – | Filled in by the connect page; or a key issued by hand. Empty until then |
+| `STUDYLIFE_API_KEY_INSTANCE` | – | Written by the connect page next to the key when the server is not set in the environment: the server that issued the key. A key is only used with that server. Do not set by hand |
 | `STUDYLIFE_TIMEZONE` | `Europe/Berlin` | Time zone of the **server**; its timestamps carry no offset |
 | `DISPLAY_LANGUAGE` | `de` | `de` or `en` (*web*) |
 | `DISPLAY_DRIVER` | `waveshare` | `waveshare` (the real panel named by `DISPLAY_PANEL`; the name is historical) or `file` (a PNG) |
@@ -719,6 +785,9 @@ before showing it, the layouts (and their golden frames) stay upright.
 | Connect page: StudyLife shows an error instead of the consent screen | The client `studylife-display` is not registered on that instance, or the redirect URI (`http://localhost:8795/connect/callback`, or the `DISPLAY_PUBLIC_BASE_URL` one) is not on its list - the server matches it character for character |
 | Connect page says "Schlüssel übernommen" but the key never arrives | `journalctl -u studylife-display-credentials.service -n 20`; `systemctl status studylife-display-credentials.path` must be active. With the overlay on, the key is gone after a reboot: disable it, connect, re-enable |
 | Connect page says the pasted address does not belong to this attempt | The link was regenerated (or the web service restarted) in between; generate a new link and go through StudyLife again |
+| Panel says **StudyLife-Server wählen** / **Choose your StudyLife server** | No `STUDYLIFE_BASE_URL` and no server chosen yet: open the URL on the screen and use the *Server* page |
+| The *Server* page finds nothing | The server's announcement is opt-in (see its `docs/MDNS.md`), and mDNS does not cross VLANs without a reflector - see [Finding your StudyLife server](#finding-your-studylife-server). Type the address by hand meanwhile |
+| After switching servers the panel asks to connect again | Intended: the old server's key is never used with another server; connect the account again |
 | Panel says **Daten veraltet** / **Data is stale** | No successful fetch for `DISPLAY_STALE_ERROR_HOURS`; the last error is on the screen and in `/healthz` |
 | Panel says **Keine Daten** / **No data** | The very first fetch failed and there is nothing to fall back to; `studylife-display check` shows the API error |
 | The panel does not refresh at night | `DISPLAY_QUIET_HOURS` is set; `journalctl -u studylife-display.service` shows "quiet hours ... not refreshing" |
