@@ -70,6 +70,7 @@ from studylife_display.connect import (
     public_redirect_uri,
     root_is_overlay,
     setup_connect_url,
+    setup_server_url,
     start_connect,
     whoami,
     write_pending_credentials,
@@ -79,6 +80,15 @@ from studylife_display.current_frame import (
     CurrentFrame,
     load_current_frame,
     read_current_png,
+)
+from studylife_display.discovery import (
+    DiscoveryResult,
+    InvalidServerUrl,
+    Server,
+    discover,
+    fetch_instance,
+    normalise_instance_id,
+    validate_server_url,
 )
 from studylife_display.health import health_report
 from studylife_display.layouts import AUTO, LAYOUTS, PSEUDO_CHOICES
@@ -94,11 +104,13 @@ from studylife_display.quiet_hours import quiet_hours_end
 from studylife_display.render import render
 from studylife_display.sample import sample_extras, sample_payloads
 from studylife_display.settings_store import (
+    SERVER_ENV,
     effective_settings,
     is_valid_choice,
     load_layout_choice,
     override_sources,
     save_layout_choice,
+    server_source,
     update_overrides,
     valid_choices,
 )
@@ -134,6 +146,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "bad_request": "Ungültige Anfrage.",
         "nav_layouts": "Layout",
         "nav_connect": "Verbinden",
+        "nav_server": "Server",
         "nav_settings": "Einstellungen",
         "layouts_heading": "Layout",
         "apply": "Übernehmen",
@@ -239,6 +252,65 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "connect_flash_exchange_failed": "StudyLife hat die Verbindung abgelehnt ({detail}).",
         "connect_flash_unreachable": "StudyLife ist nicht erreichbar ({detail}).",
         "connect_flash_write_failed": "Der Schlüssel konnte nicht abgelegt werden ({detail}).",
+        # -- server page
+        "server_heading": "StudyLife-Server",
+        "server_current": "Verwendeter Server: {url}",
+        "server_none": "Noch kein Server gewählt.",
+        "server_source_env": (
+            "Die Adresse kommt aus STUDYLIFE_BASE_URL in der Umgebungsdatei und lässt sich "
+            "hier nicht ändern."
+        ),
+        "server_source_store": "Hier im Webinterface gewählt.",
+        "server_id_line": "Instanz-ID: {id}",
+        "server_version_line": "Version: {version}",
+        "server_http_warn": (
+            "Diese Adresse nutzt http: der API-Schlüssel und alle Daten laufen unverschlüsselt "
+            "durch das Netz."
+        ),
+        "server_search_heading": "Im Netzwerk suchen",
+        "server_search_note": (
+            "Sucht per mDNS nach StudyLife-Servern im selben Netz. Ein Fund ist nur ein "
+            "Vorschlag: nichts wird verbunden oder geändert, bis du einen Server auswählst, und "
+            "jeder Vorschlag wurde bei der angekündigten Adresse selbst überprüft."
+        ),
+        "server_search_button": "Im Netzwerk suchen",
+        "server_found_heading": "Gefundene Server",
+        "server_found_none": (
+            "Kein StudyLife-Server gefunden. Der Server muss die Ankündigung eingeschaltet haben "
+            "und im selben Netz (VLAN) stehen, siehe README. Alternativ unten die Adresse "
+            "eintragen."
+        ),
+        "server_ignored": (
+            "{count} Ankündigung(en) übersprungen (ungültig, nicht erreichbar oder mit falscher "
+            "Instanz-ID)."
+        ),
+        "server_col_name": "Name",
+        "server_col_url": "Adresse",
+        "server_col_version": "Version",
+        "server_use": "Diesen verwenden",
+        "server_in_use": "in Verwendung",
+        "server_manual_heading": "Adresse von Hand eintragen",
+        "server_manual_label": "Adresse (https://… oder http://…)",
+        "server_manual_button": "Adresse verwenden",
+        "server_key_note": (
+            "Wechselst du den Server, wird der gespeicherte Schlüssel des bisherigen Servers "
+            "nicht mehr verwendet; das Konto muss danach neu verbunden werden."
+        ),
+        "server_next": "Nächster Schritt: Konto verbinden",
+        "server_flash_saved": "Server übernommen. Als Nächstes das Konto verbinden.",
+        "server_flash_saved_unverified": (
+            "Adresse übernommen, aber der Server hat sich nicht als StudyLife-Server mit "
+            "Instanz-ID ausgewiesen (ältere Version oder nicht erreichbar). Bitte prüfen."
+        ),
+        "server_flash_invalid": "Ungültige Adresse: {detail}",
+        "server_flash_mismatch": (
+            "Abgelehnt: der Server meldet eine andere Instanz-ID als die Ankündigung."
+        ),
+        "server_flash_unreachable": "Der angekündigte Server ist nicht erreichbar.",
+        "server_flash_locked": "Der Server ist per STUDYLIFE_BASE_URL festgelegt.",
+        "server_flash_searched": "Suche abgeschlossen.",
+        "connect_no_server": "Noch kein Server gewählt. Bitte zuerst unter „Server“ einen wählen.",
+        "setup_hint_server": "Noch kein StudyLife-Server gewählt – Server wählen unter: {url}",
         "connect_callback_done": (
             "Schlüssel übernommen, Dienst startet neu. Dieses Fenster kann geschlossen werden."
         ),
@@ -330,6 +402,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "bad_request": "Bad request.",
         "nav_layouts": "Layout",
         "nav_connect": "Connect",
+        "nav_server": "Server",
         "nav_settings": "Settings",
         "layouts_heading": "Layout",
         "apply": "Apply",
@@ -425,6 +498,62 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "connect_flash_exchange_failed": "StudyLife refused the connection ({detail}).",
         "connect_flash_unreachable": "StudyLife is unreachable ({detail}).",
         "connect_flash_write_failed": "The key could not be stored ({detail}).",
+        # -- server page
+        "server_heading": "StudyLife server",
+        "server_current": "Server in use: {url}",
+        "server_none": "No server chosen yet.",
+        "server_source_env": (
+            "The address comes from STUDYLIFE_BASE_URL in the environment file and cannot be "
+            "changed here."
+        ),
+        "server_source_store": "Chosen here in the web interface.",
+        "server_id_line": "Instance id: {id}",
+        "server_version_line": "Version: {version}",
+        "server_http_warn": (
+            "This address uses http: the API key and all data cross the network unencrypted."
+        ),
+        "server_search_heading": "Search the network",
+        "server_search_note": (
+            "Looks for StudyLife servers on the same network via mDNS. A result is only a "
+            "proposal: nothing is connected or changed until you pick a server, and every "
+            "proposal was checked against the announced address itself."
+        ),
+        "server_search_button": "Search the network",
+        "server_found_heading": "Servers found",
+        "server_found_none": (
+            "No StudyLife server found. The server has to have its announcement switched on and "
+            "sit in the same network (VLAN), see the README. Or enter the address below."
+        ),
+        "server_ignored": (
+            "{count} announcement(s) skipped (invalid, unreachable or with the wrong instance id)."
+        ),
+        "server_col_name": "Name",
+        "server_col_url": "Address",
+        "server_col_version": "Version",
+        "server_use": "Use this one",
+        "server_in_use": "in use",
+        "server_manual_heading": "Enter the address by hand",
+        "server_manual_label": "Address (https://… or http://…)",
+        "server_manual_button": "Use this address",
+        "server_key_note": (
+            "If you switch servers, the stored key of the previous server is no longer used; "
+            "the account has to be connected again afterwards."
+        ),
+        "server_next": "Next step: connect the account",
+        "server_flash_saved": "Server saved. Next, connect the account.",
+        "server_flash_saved_unverified": (
+            "Address saved, but the server did not identify itself as a StudyLife server with an "
+            "instance id (older version or unreachable). Please check it."
+        ),
+        "server_flash_invalid": "Invalid address: {detail}",
+        "server_flash_mismatch": (
+            "Rejected: the server reports a different instance id than the announcement."
+        ),
+        "server_flash_unreachable": "The announced server is not reachable.",
+        "server_flash_locked": "The server is fixed by STUDYLIFE_BASE_URL.",
+        "server_flash_searched": "Search finished.",
+        "connect_no_server": "No server chosen yet. Choose one under Server first.",
+        "setup_hint_server": "No StudyLife server chosen yet – choose one at: {url}",
         "connect_callback_done": (
             "Key applied, the service is restarting. You can close this window."
         ),
@@ -514,6 +643,15 @@ CONNECT_FLASH_KEYS = {
     "write_failed",
 }
 SETTINGS_FLASH_KEYS = {"saved", "reset"}
+SERVER_FLASH_KEYS = {
+    "saved",
+    "saved_unverified",
+    "invalid",
+    "mismatch",
+    "unreachable",
+    "locked",
+    "searched",
+}
 
 STYLE = """
 :root { color-scheme: light dark; }
@@ -589,6 +727,14 @@ class WebApp:
         self._pending_lock = threading.Lock()
         # Detail of the last connect failure, for the flash message after the redirect.
         self._flash_detail = ""
+        # The last network search (memory only; nothing in it is trusted beyond what
+        # `discovery.discover` verified) and the detail of the last server-choice failure.
+        # `discover` and `fetch_instance` are attributes so the tests can replace them.
+        self.discover = discover
+        self.fetch_instance = fetch_instance
+        self._discovery: DiscoveryResult | None = None
+        self._search_lock = threading.Lock()
+        self._server_detail = ""
 
     def effective(self) -> Settings:
         return effective_settings(self.settings)
@@ -733,17 +879,114 @@ class WebApp:
         return "".join(parts)
 
     def setup_hint(self) -> str:
-        """The "connect at ..." line the layouts page shows while no key is stored; empty
-        once there is one."""
-        if self.settings.studylife_api_key:
+        """The "connect at ..." line the layouts page shows while no key is stored (or "choose
+        a server at ..." while there is no server); empty once the display is set up."""
+        effective = self.effective()
+        if effective.server_url and effective.studylife_api_key:
             return ""
-        url = setup_connect_url(self.settings)
-        text = self.text["setup_hint"].format(url=url)
+        if effective.server_url:
+            url = setup_connect_url(self.settings)
+            text = self.text["setup_hint"].format(url=url)
+        else:
+            url = setup_server_url(self.settings)
+            text = self.text["setup_hint_server"].format(url=url)
         before, _, _ = text.partition(url)
         return (
             f"<p class='warn'>{html.escape(before)}"
             f"<a href='{html.escape(url, quote=True)}'>{html.escape(url)}</a></p>"
         )
+
+    # -- the server ---------------------------------------------------------------------
+
+    @property
+    def server_detail(self) -> str:
+        return self._server_detail
+
+    def last_discovery(self) -> DiscoveryResult | None:
+        return self._discovery
+
+    def search_servers(self) -> DiscoveryResult | None:
+        """Runs one network search and keeps the result. None when another search is
+        running right now (its result will be there in a moment)."""
+        if not self._search_lock.acquire(blocking=False):
+            return None
+        try:
+            result = self.discover()
+            self._discovery = result
+            log.info(
+                "network search: %d server(s), %d announcement(s) ignored",
+                len(result.servers),
+                result.ignored,
+            )
+            return result
+        finally:
+            self._search_lock.release()
+
+    def server_info(self) -> dict[str, Any]:
+        """The configured server for the page and the API: URL ("" when none), where it
+        comes from ("env"/"store"/"none"), the instance id when known and the version when
+        the last search saw this very server."""
+        effective = self.effective()
+        url = effective.server_url
+        server_id = effective.studylife_server_id or None
+        version = None
+        if self._discovery is not None:
+            for found in self._discovery.servers:
+                if found.url == url or (server_id is not None and found.id == server_id):
+                    version = found.version or None
+                    server_id = server_id or found.id
+        return {
+            "url": url,
+            "source": server_source(self.settings),
+            "id": server_id,
+            "version": version,
+        }
+
+    def choose_server(self, raw_url: str, announced_id: str = "") -> str:
+        """Makes `raw_url` the display's server (settings.json); returns the flash key.
+
+        Never called with anything but a human's choice: a click on a search result or a
+        typed address. The URL is validated strictly and asked for its instance id; a result
+        that carried an announced id has to match it. A manually typed address that does not
+        answer (a server older than 3.22 has no /api/instance) is saved without an id.
+        Choosing a different server drops a connect attempt in progress and the cached
+        snapshot of the old one; its API key stops being used by itself (see
+        `settings_store.effective_settings`)."""
+        if server_source(self.settings) == SERVER_ENV:
+            return "locked"
+        try:
+            url = validate_server_url(raw_url)
+        except InvalidServerUrl as exc:
+            self._server_detail = str(exc)
+            return "invalid"
+        wanted: str | None = None
+        if announced_id.strip():
+            wanted = normalise_instance_id(announced_id)
+            if wanted is None:
+                self._server_detail = "instance id"
+                return "invalid"
+        answer = self.fetch_instance(url)
+        if wanted is not None:
+            if answer is None:
+                return "unreachable"
+            if answer[0] != wanted:
+                log.warning("refusing %s: announced id %s, answers %s", url, wanted, answer[0])
+                return "mismatch"
+        instance_id = answer[0] if answer is not None else None
+        previous = self.effective().server_url
+        update_overrides(self.settings, server_url=url, server_id=instance_id)
+        log.info("server set to %s (id %s)", url, instance_id)
+        if previous != url:
+            self._server_changed()
+        return "saved" if answer is not None else "saved_unverified"
+
+    def _server_changed(self) -> None:
+        with self._pending_lock:
+            self._pending = None
+        try:
+            Path(self.settings.display_state_path).unlink(missing_ok=True)
+        except OSError as exc:
+            log.warning("could not drop the cached snapshot of the previous server: %s", exc)
 
     # -- connecting ---------------------------------------------------------------------
 
@@ -763,9 +1006,13 @@ class WebApp:
                 return None
             return pending
 
-    def begin_connect(self) -> PendingConnect:
+    def begin_connect(self) -> PendingConnect | None:
+        """Starts an attempt against the configured server; None while there is none."""
+        instance = self.effective().server_url
+        if not instance:
+            return None
         _, redirect_uri = self.connect_mode()
-        pending = start_connect(str(self.settings.studylife_base_url), redirect_uri, self.now())
+        pending = start_connect(instance, redirect_uri, self.now())
         with self._pending_lock:
             self._pending = pending
         log.info("connect attempt started (redirect_uri=%s)", redirect_uri)
@@ -786,16 +1033,14 @@ class WebApp:
             check_callback(pending, result, self.now())
             assert pending is not None
             api_key, user_id = exchange_assertion(
-                str(self.settings.studylife_base_url), CLIENT_ID, result.assertion, pending.verifier
+                pending.instance_url, CLIENT_ID, result.assertion, pending.verifier
             )
         except ConnectError as exc:
             log.warning("connect attempt failed: %s", exc)
             self._flash_detail = exc.detail
             return exc.key
         try:
-            write_pending_credentials(
-                self.state_dir, api_key, str(self.settings.studylife_base_url), self.now()
-            )
+            write_pending_credentials(self.state_dir, api_key, pending.instance_url, self.now())
         except OSError as exc:
             log.error("could not write the pending credentials: %s", exc)
             self._flash_detail = str(exc)
@@ -807,8 +1052,8 @@ class WebApp:
         """What the connect page says about the stored key: nothing stored, or whoami's
         answer, or why it could not be obtained."""
         t = self.text
-        instance = str(self.settings.studylife_base_url).rstrip("/")
-        key = self.settings.studylife_api_key
+        instance = self.effective().server_url
+        key = self.effective().studylife_api_key
         if not key:
             return t["connect_no_key"]
         try:
@@ -872,7 +1117,12 @@ class WebApp:
 
     def _nav(self, current: str) -> str:
         t = self.text
-        links = [("/", "nav_layouts"), ("/connect", "nav_connect"), ("/settings", "nav_settings")]
+        links = [
+            ("/", "nav_layouts"),
+            ("/server", "nav_server"),
+            ("/connect", "nav_connect"),
+            ("/settings", "nav_settings"),
+        ]
         parts = ["<nav>"]
         for href, key in links:
             marker = " aria-current='page'" if href == current else ""
@@ -1004,12 +1254,111 @@ class WebApp:
         parts.append("</div></div>")
         return "".join(parts)
 
+    def server_page(self, flash: str | None = None) -> bytes:
+        t = self.text
+        info = self.server_info()
+        locked = info["source"] == SERVER_ENV
+        parts = [f"<h1>{html.escape(t['title'])} · {html.escape(t['server_heading'])}</h1>"]
+        parts.append(self._nav("/server"))
+        if flash in SERVER_FLASH_KEYS:
+            message = t["server_flash_" + flash].format(detail=self._server_detail)
+            parts.append(f"<p class='flash'>{html.escape(message)}</p>")
+            if flash in ("saved", "saved_unverified"):
+                parts.append(f"<p><a href='/connect'>{html.escape(t['server_next'])}</a></p>")
+        if info["url"]:
+            parts.append(
+                f"<p class='flash'>{html.escape(t['server_current'].format(url=info['url']))}</p>"
+            )
+            details = [t["server_source_env" if locked else "server_source_store"]]
+            if info["id"]:
+                details.append(t["server_id_line"].format(id=info["id"]))
+            if info["version"]:
+                details.append(t["server_version_line"].format(version=info["version"]))
+            parts.append(f"<p class='note'>{html.escape(' · '.join(details))}</p>")
+            if str(info["url"]).startswith("http://"):
+                parts.append(f"<p class='warn'>{html.escape(t['server_http_warn'])}</p>")
+        else:
+            parts.append(f"<p class='flash'>{html.escape(t['server_none'])}</p>")
+        if locked:
+            parts.append(
+                f"<footer>{html.escape(self.footer_line(self.state_dir, self.now()))}</footer>"
+            )
+            return _page(t["title"], "".join(parts))
+        parts.append(f"<h2>{html.escape(t['server_search_heading'])}</h2>")
+        parts.append(f"<p class='note'>{html.escape(t['server_search_note'])}</p>")
+        parts.append(
+            "<form method='post' action='/server/search' class='actions'>"
+            f"<button class='primary' type='submit'>{html.escape(t['server_search_button'])}"
+            "</button></form>"
+        )
+        result = self.last_discovery()
+        if result is not None:
+            parts.append(f"<h3>{html.escape(t['server_found_heading'])}</h3>")
+            if result.servers:
+                parts.append(self._found_table(result.servers, str(info["url"])))
+            else:
+                parts.append(f"<p class='note'>{html.escape(t['server_found_none'])}</p>")
+            if result.ignored:
+                ignored = t["server_ignored"].format(count=result.ignored)
+                parts.append(f"<p class='note'>{html.escape(ignored)}</p>")
+        parts.append(f"<h2>{html.escape(t['server_manual_heading'])}</h2>")
+        parts.append(
+            "<form method='post' action='/server/use' class='field'>"
+            f"<label for='server_url'>{html.escape(t['server_manual_label'])}</label>"
+            "<input id='server_url' name='url' type='text' required autocomplete='off' "
+            "spellcheck='false' inputmode='url' placeholder='https://studylife.example.org'>"
+            f"<button class='primary' type='submit'>{html.escape(t['server_manual_button'])}"
+            "</button></form>"
+        )
+        parts.append(f"<p class='note'>{html.escape(t['server_key_note'])}</p>")
+        parts.append(
+            f"<footer>{html.escape(self.footer_line(self.state_dir, self.now()))}</footer>"
+        )
+        return _page(t["title"], "".join(parts))
+
+    def _found_table(self, servers: tuple[Server, ...], current_url: str) -> str:
+        t = self.text
+        rows = [
+            "<table><tr>"
+            f"<th>{html.escape(t['server_col_name'])}</th>"
+            f"<th>{html.escape(t['server_col_url'])}</th>"
+            f"<th>{html.escape(t['server_col_version'])}</th><th></th></tr>"
+        ]
+        for server in servers:
+            if server.url == current_url:
+                action = html.escape(t["server_in_use"])
+            else:
+                url_value = html.escape(server.url, quote=True)
+                id_value = html.escape(server.id, quote=True)
+                action = (
+                    "<form method='post' action='/server/use' class='actions'>"
+                    f"<input type='hidden' name='url' value='{url_value}'>"
+                    f"<input type='hidden' name='id' value='{id_value}'>"
+                    f"<button type='submit'>{html.escape(t['server_use'])}</button></form>"
+                )
+            rows.append(
+                f"<tr><td>{html.escape(server.name)}</td>"
+                f"<td class='mono'>{html.escape(server.url)}</td>"
+                f"<td>{html.escape(server.version)}</td><td>{action}</td></tr>"
+            )
+        rows.append("</table>")
+        return "".join(rows)
+
     def connect_page(self, flash: str | None = None) -> bytes:
         t = self.text
         mode, redirect_uri = self.connect_mode()
-        instance = str(self.settings.studylife_base_url).rstrip("/")
+        instance = self.effective().server_url
         parts = [f"<h1>{html.escape(t['title'])} · {html.escape(t['connect_heading'])}</h1>"]
         parts.append(self._nav("/connect"))
+        if not instance:
+            parts.append(
+                f"<p class='warn'>{html.escape(t['connect_no_server'])} "
+                f"<a href='/server'>{html.escape(t['server_heading'])}</a></p>"
+            )
+            parts.append(
+                f"<footer>{html.escape(self.footer_line(self.state_dir, self.now()))}</footer>"
+            )
+            return _page(t["title"], "".join(parts))
         if flash in CONNECT_FLASH_KEYS:
             message = t["connect_flash_" + flash].format(detail=self._flash_detail)
             parts.append(f"<p class='flash'>{html.escape(message)}</p>")
@@ -1203,7 +1552,7 @@ class WebApp:
         for name, field, show_value in READONLY_FIELDS:
             raw = getattr(self.settings, field)
             presence = t["settings_set"] if raw else t["settings_unset"]
-            shown = str(raw) if show_value else presence
+            shown = ("" if raw is None else str(raw)) if show_value else presence
             parts.append(
                 f"<tr><th>{html.escape(name)}</th><td class='mono'>{html.escape(shown)}</td>"
                 f"<td>{html.escape(t['settings_env_source'])}</td></tr>"
@@ -1369,12 +1718,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             self._send(HTTPStatus.OK, app.layouts_page(self._flash(parts.query)))
             return
-        if parts.path in ("/connect", "/settings"):
+        if parts.path in ("/connect", "/settings", "/server"):
             if not self._authenticated():
                 self._send(HTTPStatus.FORBIDDEN, app.simple_page(app.text["forbidden"]))
                 return
-            page = app.connect_page if parts.path == "/connect" else app.settings_page
-            self._send(HTTPStatus.OK, page(self._flash(parts.query)))
+            pages = {
+                "/connect": app.connect_page,
+                "/settings": app.settings_page,
+                "/server": app.server_page,
+            }
+            self._send(HTTPStatus.OK, pages[parts.path](self._flash(parts.query)))
             return
         if parts.path == "/current.png":
             if not self._authenticated():
@@ -1428,6 +1781,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             "/refresh",
             "/connect/start",
             "/connect/paste",
+            "/server/search",
+            "/server/use",
             "/settings",
             "/settings/reset",
         }
@@ -1466,8 +1821,24 @@ class RequestHandler(BaseHTTPRequestHandler):
         if parts.path == "/refresh":
             self._redirect("/?m=" + self._run_refresh())
             return
+        if parts.path == "/server/search":
+            if server_source(app.settings) == SERVER_ENV:
+                self._redirect("/server?m=locked")
+                return
+            app.search_servers()
+            self._redirect("/server?m=searched")
+            return
+        if parts.path == "/server/use":
+            outcome = app.choose_server(form.get("url", ""), form.get("id", ""))
+            if outcome in ("saved", "saved_unverified"):
+                # The panel switches to the "connect your account" screen right away.
+                self._run_refresh()
+            self._redirect("/server?m=" + outcome)
+            return
         if parts.path == "/connect/start":
-            app.begin_connect()
+            if app.begin_connect() is None:
+                self._redirect("/server")
+                return
             self._redirect("/connect?m=started")
             return
         if parts.path == "/connect/paste":

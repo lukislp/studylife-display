@@ -47,6 +47,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import httpx
 
 from studylife_display.config import Settings, parse_bind
+from studylife_display.discovery import InvalidServerUrl, validate_server_url
 
 log = logging.getLogger(__name__)
 
@@ -142,6 +143,19 @@ def setup_connect_url(settings: Settings, hostname: str | None = None) -> str:
     return f"http://{host}.local:{port}{CONNECT_PATH}"
 
 
+SERVER_PATH = "/server"
+
+
+def setup_server_url(settings: Settings, hostname: str | None = None) -> str:
+    """Where the "choose your server" setup screen sends the person: the server page of the
+    web interface, on the same origin `setup_connect_url` would use (DISPLAY_SETUP_URL's
+    origin, else DISPLAY_PUBLIC_BASE_URL, else `http://<hostname>.local:<port>`)."""
+    if settings.display_setup_url:
+        parts = urlsplit(settings.display_setup_url)
+        return f"{parts.scheme}://{parts.netloc}{SERVER_PATH}"
+    return setup_connect_url(settings, hostname).removesuffix(CONNECT_PATH) + SERVER_PATH
+
+
 # -- one attempt -------------------------------------------------------------------------
 
 
@@ -154,6 +168,9 @@ class PendingConnect:
     redirect_uri: str
     connect_url: str
     created_at: datetime
+    # The server this attempt was started against: the assertion is redeemed there and the
+    # key recorded as issued by it, whatever the configured server is by the time it ends.
+    instance_url: str = ""
 
     @property
     def expires_at(self) -> datetime:
@@ -174,6 +191,7 @@ def start_connect(
         redirect_uri=redirect_uri,
         connect_url=build_connect_url(instance_url, client_id, redirect_uri, state, challenge),
         created_at=now,
+        instance_url=normalise_instance(instance_url),
     )
 
 
@@ -282,9 +300,10 @@ def write_pending_credentials(
     return path
 
 
-def read_pending_credentials(path: Path) -> str:
-    """The key in a pending file. FileNotFoundError when there is none; ValueError when the
-    file is not what write_pending_credentials writes."""
+def read_pending(path: Path) -> tuple[str, str]:
+    """(key, server) in a pending file: the key and the canonical URL of the server that
+    issued it, "" when the file carries none or an unusable one. FileNotFoundError when
+    there is no file; ValueError when it is not what write_pending_credentials writes."""
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"{path} is not a JSON object")
@@ -292,7 +311,16 @@ def read_pending_credentials(path: Path) -> str:
     if not valid_api_key(api_key):
         raise ValueError(f"{path} holds no usable apiKey")
     assert isinstance(api_key, str)
-    return api_key
+    try:
+        server = validate_server_url(str(raw.get("instance", "")))
+    except InvalidServerUrl:
+        server = ""
+    return api_key, server
+
+
+def read_pending_credentials(path: Path) -> str:
+    """The key in a pending file (see read_pending)."""
+    return read_pending(path)[0]
 
 
 # -- who the key belongs to ---------------------------------------------------------------

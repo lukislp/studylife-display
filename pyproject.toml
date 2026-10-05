@@ -12,6 +12,9 @@ dependencies = [
     "pillow>=11.0",
     # QR code on the first-run setup screen; pure Python, drawn module by module into the frame.
     "segno>=1.6",
+    # mDNS / DNS-SD browsing for the "find my StudyLife server" button; pure Python, only
+    # imported when a search actually runs (see discovery.py).
+    "zeroconf>=0.132",
     # zoneinfo needs a tz database; Linux has /usr/share/zoneinfo, Windows does not.
     "tzdata>=2024.1; sys_platform == 'win32'",
 ]

@@ -27,7 +27,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
 
 from studylife_display.config import (
     OVERRIDE_FIELDS,
@@ -36,6 +36,7 @@ from studylife_display.config import (
     canonical_layout,
     parse_layout_list,
 )
+from studylife_display.discovery import InvalidServerUrl, validate_server_url
 from studylife_display.layouts import LAYOUTS, PSEUDO_CHOICES
 
 log = logging.getLogger(__name__)
@@ -166,12 +167,49 @@ def update_overrides(settings: Settings, **changes: Any) -> Path:
     return save_overrides(settings, merged)
 
 
+_HTTP_URL = TypeAdapter(AnyHttpUrl)
+
+SERVER_ENV = "env"
+SERVER_STORE = "store"
+SERVER_NONE = "none"
+
+
+def key_bound_url(settings: Settings) -> str:
+    """The canonical URL of the server STUDYLIFE_API_KEY was issued by (what
+    `credentials-apply` wrote next to it), "" when unknown."""
+    try:
+        return validate_server_url(settings.studylife_api_key_instance)
+    except InvalidServerUrl:
+        return ""
+
+
+def server_source(settings: Settings) -> str:
+    """Where the server comes from: "env" (STUDYLIFE_BASE_URL, always wins), "store" (chosen
+    in the web interface, settings.json) or "none" (nothing chosen yet)."""
+    if settings.studylife_base_url is not None:
+        return SERVER_ENV
+    return SERVER_STORE if load_overrides(settings).server_url else SERVER_NONE
+
+
 def effective_settings(settings: Settings) -> Settings:
     """The environment settings with settings.json layered on top: the one place `run`,
-    `serve` and `check` get their language, rotation, quiet hours, clear time, update check
-    and layout from."""
-    overrides = load_overrides(settings)
-    changes = {OVERRIDE_FIELDS[key]: value for key, value in overrides.as_json().items()}
+    `serve` and `check` get their language, rotation, quiet hours, clear time, update check,
+    layout and - only while STUDYLIFE_BASE_URL is empty - the chosen server from.
+
+    A key is only ever used with the server it was issued by: when the server comes from
+    settings.json and the key's recorded origin (STUDYLIFE_API_KEY_INSTANCE) is not that
+    server, the key is dropped here, so choosing another server can never send the old
+    server's key to it. With STUDYLIFE_BASE_URL set nothing of this applies."""
+    stored = load_overrides(settings).as_json()
+    changes = {
+        OVERRIDE_FIELDS[key]: value for key, value in stored.items() if key in OVERRIDE_FIELDS
+    }
+    if settings.studylife_base_url is None and "server_url" in stored:
+        url = stored["server_url"]
+        changes["studylife_base_url"] = _HTTP_URL.validate_python(url)
+        changes["studylife_server_id"] = stored.get("server_id", "")
+        if key_bound_url(settings) != url:
+            changes["studylife_api_key"] = ""
     return settings.model_copy(update=changes) if changes else settings
 
 
