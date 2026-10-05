@@ -33,10 +33,12 @@ from studylife_display.layouts import AUTO, LAYOUTS, PSEUDO_CHOICES
 from studylife_display.layouts.auto import resolve_layout, rules_from_settings
 from studylife_display.layouts.panes import PANES
 from studylife_display.settings_store import (
+    SERVER_ENV,
     is_valid_choice,
     load_layout_choice,
     override_sources,
     save_layout_choice,
+    server_source,
     update_overrides,
 )
 from studylife_display.studylife_client import SCOPES
@@ -177,6 +179,7 @@ def _state(app: WebApp, health_report: HealthReport) -> tuple[dict[str, Any], HT
     payload = {
         **report,
         "layout_choice": load_layout_choice(settings),
+        "server": app.server_info(),
         "current_frame": _current_frame_json(app),
         "panel": _panel_json(settings),
     }
@@ -259,6 +262,26 @@ def _connect_state(app: WebApp) -> dict[str, Any]:
         "client_id": CLIENT_ID,
         "scopes": list(SCOPES),
     }
+
+
+def _discovery(app: WebApp) -> dict[str, Any]:
+    """The configured server and the last network search (None until one ran). Reading it
+    never searches: `POST /api/discovery/search` does."""
+    result = app.last_discovery()
+    return {
+        "server": app.server_info(),
+        "locked": server_source(app.settings) == SERVER_ENV,
+        "last_search": None if result is None else result.as_json(),
+    }
+
+
+# choose_server outcome -> (HTTP status, error code); the two saved outcomes are successes.
+SERVER_ERRORS = {
+    "invalid": (HTTPStatus.BAD_REQUEST, "invalid_url"),
+    "locked": (HTTPStatus.CONFLICT, "server_fixed_by_environment"),
+    "mismatch": (HTTPStatus.CONFLICT, "instance_id_mismatch"),
+    "unreachable": (HTTPStatus.BAD_GATEWAY, "unreachable"),
+}
 
 
 def handle(
@@ -346,6 +369,38 @@ def handle(
             return _error(HTTPStatus.BAD_REQUEST, str(exc))
         log.info("settings saved via the API: %s", payload)
         return _json(HTTPStatus.OK, _settings_get(app))
+
+    if method == "GET" and path == "/api/discovery":
+        return _json(HTTPStatus.OK, _discovery(app))
+
+    if method == "POST" and path == "/api/discovery/search":
+        if server_source(app.settings) == SERVER_ENV:
+            return _error(HTTPStatus.CONFLICT, "server_fixed_by_environment")
+        if app.search_servers() is None:
+            return _error(HTTPStatus.CONFLICT, "search_running")
+        return _json(HTTPStatus.OK, _discovery(app))
+
+    if method == "POST" and path == "/api/server":
+        payload = _parse_json_object(body)
+        if payload is None:
+            return _error(HTTPStatus.BAD_REQUEST, "invalid_json")
+        url, announced_id = payload.get("url"), payload.get("id", "")
+        if not isinstance(url, str) or not isinstance(announced_id, str):
+            return _error(HTTPStatus.BAD_REQUEST, "invalid_url")
+        outcome = app.choose_server(url, announced_id)
+        if outcome in SERVER_ERRORS:
+            status, code = SERVER_ERRORS[outcome]
+            detail = app.server_detail if outcome == "invalid" else ""
+            return _json(status, {"error": code, "detail": detail})
+        log.info("server set via the API (%s)", outcome)
+        return _json(
+            HTTPStatus.OK,
+            {
+                "outcome": outcome,
+                "refresh": app.run_refresh(),
+                "server": app.server_info(),
+            },
+        )
 
     if method == "GET" and path == "/api/connect":
         return _json(HTTPStatus.OK, _connect_state(app))
