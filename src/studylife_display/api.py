@@ -120,8 +120,8 @@ def _current_frame_json(app: WebApp) -> dict[str, Any] | None:
 
 
 def _identity(app: WebApp) -> dict[str, Any]:
-    settings = app.settings
-    instance = str(settings.studylife_base_url).rstrip("/")
+    settings = app.effective()
+    instance = settings.server_url
     key = settings.studylife_api_key
     if not key:
         return {"connected": False, "instance": instance, "user_id": None, "error": None}

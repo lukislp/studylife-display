@@ -735,7 +735,7 @@ class WebApp:
     def setup_hint(self) -> str:
         """The "connect at ..." line the layouts page shows while no key is stored; empty
         once there is one."""
-        if self.settings.studylife_api_key:
+        if self.effective().studylife_api_key:
             return ""
         url = setup_connect_url(self.settings)
         text = self.text["setup_hint"].format(url=url)
@@ -765,7 +765,7 @@ class WebApp:
 
     def begin_connect(self) -> PendingConnect:
         _, redirect_uri = self.connect_mode()
-        pending = start_connect(str(self.settings.studylife_base_url), redirect_uri, self.now())
+        pending = start_connect(self.effective().server_url, redirect_uri, self.now())
         with self._pending_lock:
             self._pending = pending
         log.info("connect attempt started (redirect_uri=%s)", redirect_uri)
@@ -786,16 +786,14 @@ class WebApp:
             check_callback(pending, result, self.now())
             assert pending is not None
             api_key, user_id = exchange_assertion(
-                str(self.settings.studylife_base_url), CLIENT_ID, result.assertion, pending.verifier
+                pending.instance_url, CLIENT_ID, result.assertion, pending.verifier
             )
         except ConnectError as exc:
             log.warning("connect attempt failed: %s", exc)
             self._flash_detail = exc.detail
             return exc.key
         try:
-            write_pending_credentials(
-                self.state_dir, api_key, str(self.settings.studylife_base_url), self.now()
-            )
+            write_pending_credentials(self.state_dir, api_key, pending.instance_url, self.now())
         except OSError as exc:
             log.error("could not write the pending credentials: %s", exc)
             self._flash_detail = str(exc)
@@ -807,8 +805,8 @@ class WebApp:
         """What the connect page says about the stored key: nothing stored, or whoami's
         answer, or why it could not be obtained."""
         t = self.text
-        instance = str(self.settings.studylife_base_url).rstrip("/")
-        key = self.settings.studylife_api_key
+        instance = self.effective().server_url
+        key = self.effective().studylife_api_key
         if not key:
             return t["connect_no_key"]
         try:
@@ -1007,7 +1005,7 @@ class WebApp:
     def connect_page(self, flash: str | None = None) -> bytes:
         t = self.text
         mode, redirect_uri = self.connect_mode()
-        instance = str(self.settings.studylife_base_url).rstrip("/")
+        instance = self.effective().server_url
         parts = [f"<h1>{html.escape(t['title'])} · {html.escape(t['connect_heading'])}</h1>"]
         parts.append(self._nav("/connect"))
         if flash in CONNECT_FLASH_KEYS:

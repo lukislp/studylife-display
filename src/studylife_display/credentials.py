@@ -23,12 +23,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 from studylife_display.config import Settings
-from studylife_display.connect import pending_path, read_pending_credentials
+from studylife_display.connect import pending_path, read_pending
 
 log = logging.getLogger(__name__)
 
 ENV_FILE = "/etc/studylife-display.env"
 ENV_KEY = "STUDYLIFE_API_KEY"
+ENV_KEY_INSTANCE = "STUDYLIFE_API_KEY_INSTANCE"
 WEB_UNIT = "studylife-display-web.service"
 REFRESH_UNIT = "studylife-display.service"
 
@@ -57,8 +58,17 @@ def replace_env_file(path: Path, key: str, value: str) -> None:
     power cut leaves the old file or the new one, never a truncated one that would stop
     every unit from starting. Mode and owner are copied from the existing file (0640
     root:pi as the installer sets it); the file has to exist."""
+    replace_env_values(path, {key: value})
+
+
+def replace_env_values(path: Path, values: dict[str, str]) -> None:
+    """replace_env_file for several lines at once, in ONE atomic replacement: the key and
+    the server it belongs to can never be seen apart."""
     original = path.read_bytes()
-    updated = rewrite_env_line(original.decode("utf-8"), key, value).encode("utf-8")
+    text = original.decode("utf-8")
+    for key, value in values.items():
+        text = rewrite_env_line(text, key, value)
+    updated = text.encode("utf-8")
     current = path.stat()
     tmp = path.with_name(path.name + ".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -96,7 +106,7 @@ def apply_pending_credentials(
     systemctl = systemctl if systemctl is not None else run_systemctl
     pending = pending_path(Path(settings.display_state_path).parent)
     try:
-        api_key = read_pending_credentials(pending)
+        api_key, server = read_pending(pending)
     except FileNotFoundError:
         log.info("no %s, nothing to apply", pending)
         return 0
@@ -104,8 +114,13 @@ def apply_pending_credentials(
         log.error("refusing %s: %s", pending, exc)
         _remove(pending)
         return 1
+    values = {ENV_KEY: api_key}
+    if settings.studylife_base_url is None:
+        # The server comes from settings.json: record which one issued this key. With
+        # STUDYLIFE_BASE_URL set the file stays exactly as it always was.
+        values[ENV_KEY_INSTANCE] = server
     try:
-        replace_env_file(env_path, ENV_KEY, api_key)
+        replace_env_values(env_path, values)
     except OSError as exc:
         log.error("could not write %s: %s", env_path, exc)
         _remove(pending)

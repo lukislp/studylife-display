@@ -24,7 +24,7 @@ from studylife_display.config import (
     Settings,
     parse_layout_list,
 )
-from studylife_display.connect import local_hostname, setup_connect_url
+from studylife_display.connect import local_hostname, setup_connect_url, setup_server_url
 from studylife_display.credentials import ENV_FILE, apply_pending_credentials
 from studylife_display.current_frame import (
     DASHBOARD,
@@ -134,7 +134,7 @@ def show(
 
 def _client(settings: Settings) -> StudyLifeClient:
     return StudyLifeClient(
-        str(settings.studylife_base_url),
+        settings.server_url,
         settings.studylife_api_key,
         timeout=settings.http_timeout_seconds,
     )
@@ -290,10 +290,18 @@ def _show_setup(
     clear_first: bool,
     force: bool = False,
 ) -> bool:
-    url = setup_connect_url(settings)
-    log.info("no API key configured yet - showing the setup screen (%s)", url)
-    image = render_setup(url, settings.display_language, local_hostname(), now)
-    timeless = render_setup_fingerprint(url, settings.display_language, local_hostname(), None)
+    choose_server = not settings.server_url
+    if choose_server:
+        url = setup_server_url(settings)
+        log.info("no StudyLife server configured yet - showing the setup screen (%s)", url)
+    else:
+        url = setup_connect_url(settings)
+        log.info("no API key configured yet - showing the setup screen (%s)", url)
+    language = settings.display_language
+    image = render_setup(url, language, local_hostname(), now, choose_server=choose_server)
+    timeless = render_setup_fingerprint(
+        url, language, local_hostname(), None, choose_server=choose_server
+    )
     return _put_on_panel(
         settings,
         state_dir,
@@ -317,9 +325,10 @@ def refresh_panel(
 ) -> int:
     """Fetch -> build -> resolve layout -> render -> show, under the panel lock.
 
-    With no API key configured at all (a fresh install), nothing is fetched: the setup screen
-    with the connect URL and its QR code goes on the panel and the exit code is 0 - a panel
-    that is not set up yet is not a failure. A key that IS configured but rejected is one.
+    With no server chosen yet, or no API key configured at all (a fresh install), nothing is
+    fetched: the setup screen with the URL to open (the server page, or the connect page once a
+    server is known) and its QR code goes on the panel and the exit code is 0 - a panel that is
+    not set up yet is not a failure. A key that IS configured but rejected is one.
 
     What goes on the panel when the fetch fails: a 401/403 means the key is rejected and the
     "rejected" screen is shown right away (exit 1) - a cached dashboard would only hide the
@@ -339,7 +348,7 @@ def refresh_panel(
     state_dir = state_path.parent
     language = settings.display_language
 
-    if not settings.studylife_api_key:
+    if not settings.server_url or not settings.studylife_api_key:
         shown = _show_setup(settings, state_dir, tz, now, output_override, clear_first, force)
         return 0 if shown else 1
 
@@ -528,6 +537,9 @@ def command_preview(
 
 def command_check(settings: Settings) -> int:
     """Calls the four endpoints and prints what the dashboard would be built from."""
+    if not settings.server_url:
+        log.error("no StudyLife server configured (STUDYLIFE_BASE_URL, or the web interface)")
+        return 2
     tz = zone(settings.studylife_timezone)
     now = datetime.now(tz)
     with _client(settings) as client:
@@ -777,10 +789,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _settings(use_sample: bool) -> Settings:
     if use_sample:
-        # Sample previews need no instance at all; supply placeholders for the two required
-        # settings so a fresh checkout can render docs/preview.png without a .env.
+        # Sample previews need no instance at all; supply placeholders for the server and the key
+        # so a fresh checkout can render docs/preview.png without a .env.
         return Settings(studylife_base_url="http://sample.invalid", studylife_api_key="sample")  # type: ignore[arg-type]
-    return Settings()  # type: ignore[call-arg]
+    return Settings()
 
 
 def main(argv: list[str] | None = None) -> int:
