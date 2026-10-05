@@ -4,6 +4,7 @@ server, the manual address, CSRF, the environment lock and the stored-key rule."
 from __future__ import annotations
 
 import json
+import re
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -390,7 +391,8 @@ def test_with_an_environment_url_the_server_cannot_be_changed(
     assert fakes.searches == 0 and fakes.fetched == []
     _, _, body = client.request("GET", "/server")
     page = body.decode()
-    assert "https://studylife.env.test" in page
+    flashes = re.findall(r"<p class=.flash.>([^<]*)</p>", page)
+    assert "Verwendeter Server: https://studylife.env.test" in flashes
     assert "STUDYLIFE_BASE_URL" in page
     assert "action='/server/use'" not in page
     assert "action='/server/search'" not in page
