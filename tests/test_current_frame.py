@@ -76,3 +76,32 @@ def test_unknown_kind_is_refused(tmp_path: Path, fixed_now: datetime) -> None:
     with pytest.raises(ValueError):
         save_current_frame(tmp_path, frame(), fixed_now, None, "meltdown")
     assert not current_png_path(tmp_path).exists()
+
+
+def test_fingerprint_is_stored_but_not_exposed(
+    tmp_path: Path, tz: ZoneInfo, fixed_now: datetime
+) -> None:
+    save_current_frame(tmp_path, frame(), fixed_now, "classic", DASHBOARD, fingerprint="abc123")
+    loaded = load_current_frame(tmp_path, tz)
+    assert loaded is not None and loaded.fingerprint == "abc123"
+    assert loaded.as_json() == {
+        "shown_at": fixed_now.isoformat(),
+        "layout": "classic",
+        "kind": "dashboard",
+    }
+    assert json.loads(current_json_path(tmp_path).read_text(encoding="utf-8"))["fingerprint"] == (
+        "abc123"
+    )
+
+
+def test_old_current_json_without_a_fingerprint_loads_with_none(
+    tmp_path: Path, tz: ZoneInfo, fixed_now: datetime
+) -> None:
+    save_current_frame(tmp_path, frame(), fixed_now, "classic", DASHBOARD)
+    loaded = load_current_frame(tmp_path, tz)
+    assert loaded is not None and loaded.fingerprint is None
+    current_json_path(tmp_path).write_text(
+        '{"shown_at": "2026-09-17T16:45:00+02:00", "fingerprint": 7}', encoding="utf-8"
+    )
+    loaded = load_current_frame(tmp_path, tz)
+    assert loaded is not None and loaded.fingerprint is None

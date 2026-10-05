@@ -10,7 +10,7 @@ import logging
 import subprocess
 import sys
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -30,6 +30,7 @@ from studylife_display.current_frame import (
     DASHBOARD,
     ERROR,
     SETUP,
+    load_current_frame,
     save_current_frame,
 )
 from studylife_display.daily_clear import (
@@ -39,9 +40,12 @@ from studylife_display.daily_clear import (
     save_last_clear,
 )
 from studylife_display.driver import Display, FileDisplay, WaveshareDisplay
+from studylife_display.frame_fingerprint import frame_fingerprint
 from studylife_display.layouts.auto import resolve_layout, rules_from_settings
 from studylife_display.layouts.error import format_age, render_error
+from studylife_display.layouts.error import render_error as render_error_fingerprint
 from studylife_display.layouts.setup import render_setup
+from studylife_display.layouts.setup import render_setup as render_setup_fingerprint
 from studylife_display.model import DashboardData, build_dashboard
 from studylife_display.panel_lock import PanelLockTimeout, panel_lock
 from studylife_display.quiet_hours import in_quiet_hours, quiet_hours_end
@@ -144,6 +148,38 @@ def _record(state_dir: Path, tz: ZoneInfo, **changes: object) -> None:
         log.warning("could not write the status file in %s: %s", state_dir, exc)
 
 
+def _unchanged_since(
+    settings: Settings,
+    state_dir: Path,
+    tz: ZoneInfo,
+    now: datetime,
+    fingerprint: str,
+    *,
+    clear_first: bool,
+    force: bool,
+) -> datetime | None:
+    """When the panel last really drew, if the new frame may be skipped; None = draw.
+
+    Always drawn: with skip_unchanged off, the daily clear (`clear_first`, also inside quiet
+    hours), an explicit request (`force`), no usable record of the previous frame (missing
+    current.png/current.json or one without a fingerprint), a different fingerprint, a last
+    draw older than `redraw_after_minutes` (0 = no age limit) or one dated in the future
+    (a clock that jumped). That age limit and the daily clear are what keep the panel
+    refreshed against ghosting and burn-in even when the data never changes."""
+    if not settings.display_skip_unchanged or clear_first or force:
+        return None
+    previous = load_current_frame(state_dir, tz)
+    if previous is None or previous.fingerprint is None or previous.fingerprint != fingerprint:
+        return None
+    age = now - previous.shown_at
+    if age < timedelta(0):
+        return None
+    limit = settings.display_redraw_after_minutes
+    if limit > 0 and age >= timedelta(minutes=limit):
+        return None
+    return previous.shown_at
+
+
 def _put_on_panel(
     settings: Settings,
     state_dir: Path,
@@ -155,11 +191,40 @@ def _put_on_panel(
     *,
     kind: str,
     layout: str | None = None,
+    force: bool = False,
+    stale_minutes: int = 0,
+    duo: tuple[str, str] | None = None,
+    fingerprint_image: Image.Image | None = None,
 ) -> bool:
     """Shows `image` under the panel lock and records the moment; False when another
     refresh held the lock for too long (nothing was drawn then). A frame that went to the
     panel (not to a `preview` PNG) is also kept as current.png/current.json in the state
-    directory for the web interface, upright, tagged with `kind` and `layout`."""
+    directory for the web interface, upright, tagged with `kind` and `layout`.
+
+    A full refresh flickers and wears the panel, so a frame that would look the same as the
+    one already on it is not drawn again (see `_unchanged_since` for the rules); the check is
+    only recorded. `fingerprint_image` is what gets fingerprinted when it differs from the
+    drawn `image` (the error/setup screens carry the clock in their header)."""
+    fingerprint: str | None = None
+    if output_override is None:
+        fingerprint = frame_fingerprint(
+            image if fingerprint_image is None else fingerprint_image,
+            kind=kind,
+            layout=layout,
+            stale_minutes=stale_minutes,
+            rotate=settings.display_rotate,
+            duo=duo,
+        )
+        last_drawn = _unchanged_since(
+            settings, state_dir, tz, now, fingerprint, clear_first=clear_first, force=force
+        )
+        if last_drawn is not None:
+            log.info(
+                "frame unchanged, not redrawing the panel (last drawn %s)",
+                last_drawn.strftime("%H:%M"),
+            )
+            _record(state_dir, tz, last_frame_check_at=now)
+            return True
     display = make_display(settings, output_override)
     try:
         with panel_lock(state_dir):
@@ -174,10 +239,10 @@ def _put_on_panel(
             log.warning("could not record the clear in %s: %s", state_dir, exc)
     if output_override is None:
         try:
-            save_current_frame(state_dir, image, now, layout, kind)
+            save_current_frame(state_dir, image, now, layout, kind, fingerprint)
         except OSError as exc:
             log.warning("could not keep a copy of the frame in %s: %s", state_dir, exc)
-    _record(state_dir, tz, last_panel_update_at=now)
+    _record(state_dir, tz, last_panel_update_at=now, last_frame_check_at=now)
     return True
 
 
@@ -191,10 +256,22 @@ def _show_error(
     last_error: str,
     output_override: str | None,
     clear_first: bool,
+    force: bool = False,
 ) -> bool:
     image = render_error(kind, detail, settings.display_language, now, last_error)
+    # Without the clock in the header, so the same error is the same picture.
+    timeless = render_error_fingerprint(kind, detail, settings.display_language, None, last_error)
     return _put_on_panel(
-        settings, state_dir, tz, now, image, output_override, clear_first, kind=ERROR
+        settings,
+        state_dir,
+        tz,
+        now,
+        image,
+        output_override,
+        clear_first,
+        kind=ERROR,
+        force=force,
+        fingerprint_image=timeless,
     )
 
 
@@ -205,12 +282,23 @@ def _show_setup(
     now: datetime,
     output_override: str | None,
     clear_first: bool,
+    force: bool = False,
 ) -> bool:
     url = setup_connect_url(settings)
     log.info("no API key configured yet - showing the setup screen (%s)", url)
     image = render_setup(url, settings.display_language, local_hostname(), now)
+    timeless = render_setup_fingerprint(url, settings.display_language, local_hostname(), None)
     return _put_on_panel(
-        settings, state_dir, tz, now, image, output_override, clear_first, kind=SETUP
+        settings,
+        state_dir,
+        tz,
+        now,
+        image,
+        output_override,
+        clear_first,
+        kind=SETUP,
+        force=force,
+        fingerprint_image=timeless,
     )
 
 
@@ -219,6 +307,7 @@ def refresh_panel(
     layout_choice: str | None = None,
     output_override: str | None = None,
     clear_first: bool = False,
+    force: bool = False,
 ) -> int:
     """Fetch -> build -> resolve layout -> render -> show, under the panel lock.
 
@@ -234,7 +323,10 @@ def refresh_panel(
     the "no data" screen is shown and the exit code is 1. A lock timeout draws nothing and
     exits 1. The outcome is recorded in status.json for the web interface and /healthz.
     `layout_choice` defaults to the persisted choice (settings.json, else DISPLAY_LAYOUT);
-    `clear_first` does the daily full clear before the frame."""
+    `clear_first` does the daily full clear before the frame. A frame that would look the
+    same as the one on the panel is not drawn again (exit 0, only the check is recorded)
+    unless `clear_first`, `force` (an explicit request: the web interface, `refresh-now`) or
+    one of the other conditions in `_unchanged_since` applies."""
     tz = zone(settings.studylife_timezone)
     now = datetime.now(tz)
     state_path = Path(settings.display_state_path)
@@ -242,7 +334,7 @@ def refresh_panel(
     language = settings.display_language
 
     if not settings.studylife_api_key:
-        shown = _show_setup(settings, state_dir, tz, now, output_override, clear_first)
+        shown = _show_setup(settings, state_dir, tz, now, output_override, clear_first, force)
         return 0 if shown else 1
 
     snapshot: Snapshot | None
@@ -273,6 +365,7 @@ def refresh_panel(
                 message,
                 output_override,
                 clear_first,
+                force,
             )
             return 1
         log.warning("fetch failed (%s), falling back to the cached snapshot", exc)
@@ -295,6 +388,7 @@ def refresh_panel(
                 message,
                 output_override,
                 clear_first,
+                force,
             )
             return 1
         age_minutes = int((now.timestamp() - snapshot.fetched_at.timestamp()) // 60)
@@ -320,6 +414,7 @@ def refresh_panel(
                 message,
                 output_override,
                 clear_first,
+                force,
             )
             return 0 if shown else 1
         _record(
@@ -357,6 +452,9 @@ def refresh_panel(
         clear_first,
         kind=DASHBOARD,
         layout=layout,
+        force=force,
+        stale_minutes=data.stale_minutes,
+        duo=duo_pair(settings),
     ):
         return 1
     log.info(
@@ -570,7 +668,7 @@ def make_serve_refresh(settings: Settings) -> Callable[[], int]:
     if settings.display_driver == "file":
 
         def refresh() -> int:
-            return refresh_panel(effective_settings(settings))
+            return refresh_panel(effective_settings(settings), force=True)
 
         return refresh
 
@@ -630,8 +728,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "refresh-now",
         help=(
-            "one refresh, ignoring quiet hours and the daily clear (what the web interface's "
-            "own short-lived subprocess calls; see refresh_via_subprocess)"
+            "one refresh, ignoring quiet hours and the daily clear, and drawing even when the "
+            "frame is unchanged (what the web interface's own short-lived subprocess calls; "
+            "see refresh_via_subprocess)"
         ),
     )
 
@@ -700,7 +799,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "run":
         return command_run(settings)
     if args.command == "refresh-now":
-        return refresh_panel(settings)
+        return refresh_panel(settings, force=True)
     if args.command == "preview":
         return command_preview(settings, args.out, use_sample, args.layout)
     return command_check(settings)

@@ -164,6 +164,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         ),
         "auto_now": "derzeit: {layout}",
         "last_updated": "Panel zuletzt aktualisiert: {time}",
+        "frame_checked": "Zuletzt geprüft: {time}",
         "never_updated": "Panel noch nie aktualisiert (kein Zwischenspeicher).",
         "current_heading": "Aktuell auf dem Panel",
         "current_line": "Gezeigt seit {time} · {what}",
@@ -287,6 +288,17 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "settings_auto_recap_minutes_invalid": (
             "muss eine ganze Zahl von 0 bis 240 sein, nicht {value}"
         ),
+        "settings_skip_unchanged": (
+            "Unveränderte Bilder nicht neu zeichnen (schont das Panel, weniger Flackern)"
+        ),
+        "settings_redraw_after_minutes": "Unverändertes Bild trotzdem neu zeichnen nach (Minuten)",
+        "settings_redraw_after_minutes_hint": (
+            "0–1440; 0 = nie, dann sorgt nur die tägliche Reinigung gegen Einbrennen. Die "
+            "tägliche Reinigung und jede Aktualisierung per Knopfdruck zeichnen immer."
+        ),
+        "settings_redraw_after_minutes_invalid": (
+            "muss eine ganze Zahl von 0 bis 1440 sein, nicht {value}"
+        ),
         "settings_update_check": "Auf neue Version prüfen (fragt GitHub, alle 6 h)",
         "settings_source_file": "aus settings.json",
         "settings_source_env": "aus Umgebung/Standard",
@@ -347,6 +359,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         ),
         "auto_now": "currently: {layout}",
         "last_updated": "Panel last updated: {time}",
+        "frame_checked": "Last checked: {time}",
         "never_updated": "Panel never updated yet (no cache).",
         "current_heading": "Currently on the panel",
         "current_line": "Shown since {time} · {what}",
@@ -456,6 +469,17 @@ WEB_TEXT: dict[str, dict[str, str]] = {
             "minutes, so the recap appears up to 5 minutes after the end."
         ),
         "settings_auto_recap_minutes_invalid": "must be a whole number from 0 to 240, not {value}",
+        "settings_skip_unchanged": (
+            "Do not redraw unchanged frames (saves the panel, less flicker)"
+        ),
+        "settings_redraw_after_minutes": "Redraw an unchanged frame anyway after (minutes)",
+        "settings_redraw_after_minutes_hint": (
+            "0-1440; 0 = never, then only the daily clear protects against burn-in. The daily "
+            "clear and every refresh from a button always draw."
+        ),
+        "settings_redraw_after_minutes_invalid": (
+            "must be a whole number from 0 to 1440, not {value}"
+        ),
         "settings_update_check": "Check for a newer release (asks GitHub every 6 h)",
         "settings_source_file": "from settings.json",
         "settings_source_env": "from environment/default",
@@ -826,6 +850,17 @@ class WebApp:
                 errors["auto_recap_minutes"] = self.text[
                     "settings_auto_recap_minutes_invalid"
                 ].format(value=repr(recap_raw))
+        # The two frame-skipping fields arrive together; a client posting the previous form
+        # (no such field) leaves both untouched - an unticked box would read as "off".
+        if "redraw_after_minutes" in form:
+            values["skip_unchanged"] = form.get("skip_unchanged") == "on"
+            redraw_raw = form["redraw_after_minutes"].strip()
+            try:
+                values["redraw_after_minutes"] = int(redraw_raw)
+            except ValueError:
+                errors["redraw_after_minutes"] = self.text[
+                    "settings_redraw_after_minutes_invalid"
+                ].format(value=repr(redraw_raw))
         for key, value in values.items():
             try:
                 WebOverrides.model_validate({key: value})
@@ -888,6 +923,10 @@ class WebApp:
             parts.append(f"<p class='note'>{html.escape(quiet)}</p>")
         state_dir = self.state_dir
         status = load_status(state_dir, zone(settings.studylife_timezone))
+        if status.last_frame_check_at is not None and not is_sample:
+            checked = status.last_frame_check_at.strftime("%H:%M")
+            line = t["frame_checked"].format(time=checked)
+            parts.append(f"<p class='note'>{html.escape(line)}</p>")
         error = status.last_error
         if error is not None:
             when = error.at.strftime(TEXT[language]["date_format"] + " %H:%M")
@@ -1041,6 +1080,8 @@ class WebApp:
             "rotate": settings.display_rotate,
             "quiet_hours": settings.display_quiet_hours,
             "clear_at": settings.display_clear_at,
+            "skip_unchanged": settings.display_skip_unchanged,
+            "redraw_after_minutes": settings.display_redraw_after_minutes,
             "update_check": settings.display_update_check,
             "auto_review": settings.display_auto_review,
             "auto_agenda": settings.display_auto_agenda,
@@ -1118,6 +1159,22 @@ class WebApp:
             f"value='{html.escape(str(values['auto_recap_minutes']), quote=True)}'>"
             f"{error('auto_recap_minutes')}"
             f"<small>{html.escape(t['settings_auto_recap_minutes_hint'])}</small>"
+        )
+        skip_checked = " checked" if values["skip_unchanged"] else ""
+        parts.append(
+            f"<label><input type='checkbox' name='skip_unchanged'{skip_checked}> "
+            f"{html.escape(t['settings_skip_unchanged'])}{source('skip_unchanged')}</label>"
+            f"{error('skip_unchanged')}"
+        )
+        parts.append(
+            f"<label for='redraw_after_minutes'>"
+            f"{html.escape(t['settings_redraw_after_minutes'])}"
+            f"{source('redraw_after_minutes')}</label>"
+            f"<input id='redraw_after_minutes' name='redraw_after_minutes' type='number' "
+            f"min='0' max='1440' step='1' "
+            f"value='{html.escape(str(values['redraw_after_minutes']), quote=True)}'>"
+            f"{error('redraw_after_minutes')}"
+            f"<small>{html.escape(t['settings_redraw_after_minutes_hint'])}</small>"
         )
         checked = " checked" if values["update_check"] else ""
         parts.append(

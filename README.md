@@ -229,7 +229,8 @@ detects that; connect first, enable the overlay afterwards.
 
 ### Settings in the web interface
 
-`Einstellungen` holds language, rotation, quiet hours, the daily clear time, the update
+`Einstellungen` holds language, rotation, quiet hours, the daily clear time, whether
+unchanged frames are skipped and after how many minutes they are redrawn anyway, the update
 check, the four windows of the auto rules (weekly review, agenda, tomorrow, night) and the
 minutes of the recap rule; the
 layouts page itself holds the duo pair under the layout cards. They are saved into the
@@ -251,7 +252,8 @@ read-only and carries nothing secret) with JSON for an uptime monitor:
 {"status": "ok", "setup": false, "version": "1.3.0", "id": "9f2c4e1ab07d3856",
  "last_fetch_at": "2026-09-17T16:45:00+02:00",
  "last_fetch_ok": true, "stale_minutes": 3, "last_error": null,
- "last_panel_update_at": "2026-09-17T16:45:04+02:00", "layout": "classic",
+ "last_panel_update_at": "2026-09-17T16:45:04+02:00",
+ "last_frame_check_at": "2026-09-17T16:50:03+02:00", "layout": "classic",
  "quiet_hours_active": false, "sessions_ok": true}
 ```
 
@@ -270,6 +272,10 @@ change with the IP address or host name. See [Discovery](#discovery).
 "message": "...", "at": "..."}`. For **Uptime Kuma**: monitor type *HTTP(s) - Keyword* or
 *JSON Query*, URL `http://<hostname>:8795/healthz`, expected keyword `"status": "ok"` (or JSON
 query `status` == `ok`); a plain HTTP monitor only catches `error`, since `degraded` is a 200.
+`last_panel_update_at` is the last time the panel was really drawn; `last_frame_check_at`
+the last time a frame was compared with it, drawn or skipped as unchanged (see
+[Skipping unchanged frames](#skipping-unchanged-frames-and-burn-in-protection)). Neither
+influences `status`, which is based on the fetch and the snapshot age only.
 `sessions_ok` is `false` when the last fetch got everything but the session list (a key
 without the `Sessions.GetAll` scope, typically): the dashboard is fine, only the agenda is
 empty, and the layouts page says why. Set the interval to a few minutes; the endpoint reads
@@ -304,7 +310,7 @@ second, separate opt-in from the web interface:
 | `/api/current.png` | GET | The frame that is on the panel right now (PNG), like the cookie route; 404 before the first one. |
 | `/api/preview/<key>.png` | GET | A preview of `<key>` rendered from the cached data (PNG); 404 for an unknown key. |
 | `/api/settings` | GET | `{"values", "sources", "readonly"}` - the settings page's fields, which key came from `settings.json` vs. the environment, and the environment-only fields as `{"set": bool, "value": str\|null}` (a secret such as the API key or either token is `"set"` only, never shown). |
-| `/api/settings` | POST | A JSON object with any subset of `language`, `rotate`, `quiet_hours`, `clear_at`, `update_check`, `auto_review`, `auto_agenda`, `auto_tomorrow`, `auto_quiet`, `auto_recap_minutes` (an integer, 0 to 240), `duo` (the last one as a comma string or a list of keys) - unlike the web form (which always resubmits every field), an omitted key is left untouched and an explicit `null` resets that one key to the environment value. Validated with the same rules as the environment; an invalid value or an unknown field is a 400 and nothing is written. |
+| `/api/settings` | POST | A JSON object with any subset of `language`, `rotate`, `quiet_hours`, `clear_at`, `update_check`, `auto_review`, `auto_agenda`, `auto_tomorrow`, `auto_quiet`, `auto_recap_minutes` (an integer, 0 to 240), `skip_unchanged` (a boolean), `redraw_after_minutes` (an integer, 0 to 1440), `duo` (the last one as a comma string or a list of keys) - unlike the web form (which always resubmits every field), an omitted key is left untouched and an explicit `null` resets that one key to the environment value. Validated with the same rules as the environment; an invalid value or an unknown field is a 400 and nothing is written. |
 | `/api/settings/reset` | POST | Resets every settings.json field to the environment values, like "Reset"/"Auf Umgebungswerte zurücksetzen". |
 | `/api/connect` | GET | `{"identity", "pending", "overlay_warning", "mode", "redirect_uri", "client_id", "scopes"}` - the connect page's state as data. `identity` is `{"connected": bool, "instance", "user_id", "credential", "error"}` from `GET /api/auth/whoami`. |
 | `/api/connect/start` | POST | Begins a connect attempt, like "Start connecting"; returns `{"connect_url", "redirect_uri", "expires_at"}`. |
@@ -417,6 +423,8 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 | `DISPLAY_STALE_ERROR_HOURS` | `24` | Age of the cached snapshot from which the stale screen replaces the dashboard |
 | `DISPLAY_QUIET_HOURS` | – | `HH-HH` or `HH:MM-HH:MM`, may wrap past midnight (`23-7`); no scheduled refresh inside. Empty = off (*web*) |
 | `DISPLAY_CLEAR_AT` | `04:00` | Time of the daily full clear against ghosting; empty = off (*web*) |
+| `DISPLAY_SKIP_UNCHANGED` | `true` | Do not redraw the panel when the new frame looks the same as the one on it; `false` draws on every run (*web*). See [Skipping unchanged frames](#skipping-unchanged-frames-and-burn-in-protection) |
+| `DISPLAY_REDRAW_AFTER_MINUTES` | `60` | Redraw an unchanged frame anyway once the last real draw is this old; `0` = never (the daily clear is then the only guarantee), `1440` at most (*web*) |
 | `DISPLAY_UPDATE_CHECK` | `false` | Let the web interface ask GitHub (once per 6 h) whether a newer release exists (*web*) |
 | `DISPLAY_AUTO_UPDATE` | `false` | Let `studylife-display-update.timer` install a newer release once a day, unattended; see [Updating](#updating) |
 | `DISPLAY_LAYOUT` | `auto` | `auto` or any layout key from [Layouts](#layouts) (`classic`, `focus`, `exam`, `week`, `degree`, `agenda`, `review`, `courses`, `milestone`, `month`, `exams`, `year`, `balance`, `timer`, `tomorrow`, `today`, `goals`, `achievements`, `note`, `quiet`, `recap`, `calendar`, `duo`); overridden by the choice made in the web interface |
@@ -572,10 +580,44 @@ clear runs **inside quiet hours too** - it is the one refresh that matters - and
 the timer, never from a click in the web interface. With the `file` driver the clear writes
 `frame-clear.png` next to the output.
 
+### Skipping unchanged frames and burn-in protection
+
+Every draw is a full refresh with a visible flicker and some wear, so the scheduled `run` does
+not redraw the panel when the new frame would look the same as what is already on it. The
+comparison is a fingerprint of the frame that ignores exactly one thing, the header's right-hand
+"aktualisiert HH:MM" (the fetch time, which changes on every successful fetch); the body, the
+date, the layout, the rotation and the stale marker all count. A skipped run still fetches,
+still updates the cache and `status.json` (`last_frame_check_at`), logs `frame unchanged, not
+redrawing the panel (last drawn HH:MM)` and exits 0; `current.png`/`current.json` keep
+describing what is physically on the panel.
+
+The panel is always drawn when:
+
+- it is the **daily clear** (`DISPLAY_CLEAR_AT`): clear to white plus the frame, also inside
+  quiet hours, exactly as before;
+- the refresh is an **explicit request**: the web interface's buttons, `/api/refresh`,
+  `/api/layout` and the `refresh-now` command;
+- the frame is **different**: new data, another layout, another rotation or language, the stale
+  marker appearing, disappearing or showing a new number of minutes, another error screen;
+- the last real draw is **older than `DISPLAY_REDRAW_AFTER_MINUTES`** (default 60);
+- there is no record of the previous frame (first run, missing `current.png`, a `current.json`
+  from an older release without a fingerprint).
+
+| Setting (`settings.json` / env) | Default | Meaning |
+| --- | --- | --- |
+| `skip_unchanged` / `DISPLAY_SKIP_UNCHANGED` | `true` | `false` restores drawing on every run |
+| `redraw_after_minutes` / `DISPLAY_REDRAW_AFTER_MINUTES` | `60` | `0` to `1440`; `0` = no age-based redraw |
+
+Why this is safe for the panel: fewer full refreshes mean less wear and less flicker, and
+ghosting or burn-in are handled by what stays untouched - the daily full clear and the redraw
+at least every hour by default, which also keeps the header time reasonably honest on a
+dashboard whose data did not move.
+
 ### Refresh cadence, and why full refresh only
 
 The timer fires every five minutes (`OnUnitActiveSec=5min`, first run one minute after boot)
-and every refresh is a **full** refresh: `init()`, one complete frame, `sleep()`. Waveshare's
+and every refresh that reaches the panel is a **full** refresh (unchanged frames are skipped,
+see above): `init()`, one complete frame, `sleep()`. Waveshare's
 documentation and the panel vendor both warn against continuous partial refreshes - they
 accumulate ghosting and, done for months, damage the panel - and recommend a full refresh at
 least every few partial ones and never more often than a few times a minute. At one full

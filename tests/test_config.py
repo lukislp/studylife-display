@@ -122,3 +122,34 @@ def test_recap_minutes_reject_everything_else(
     monkeypatch.setenv("DISPLAY_AUTO_RECAP_MINUTES", value)
     with pytest.raises(ValidationError):
         Settings()  # type: ignore[call-arg]
+
+
+def test_frame_skipping_defaults(env: None) -> None:
+    settings = Settings()  # type: ignore[call-arg]
+    assert settings.display_skip_unchanged is True
+    assert settings.display_redraw_after_minutes == 60
+
+
+@pytest.mark.parametrize("value", ["0", "60", "1440"])
+def test_redraw_after_minutes_accepts_zero_to_1440(
+    env: None, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("DISPLAY_REDRAW_AFTER_MINUTES", value)
+    assert Settings().display_redraw_after_minutes == int(value)  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("value", ["-1", "1441", "soon", "1.5"])
+def test_redraw_after_minutes_rejects_everything_else(
+    env: None, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("DISPLAY_REDRAW_AFTER_MINUTES", value)
+    with pytest.raises(ValueError):
+        Settings()  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize(("value", "expected"), [("false", False), ("0", False), ("true", True)])
+def test_skip_unchanged_reads_the_environment(
+    env: None, monkeypatch: pytest.MonkeyPatch, value: str, expected: bool
+) -> None:
+    monkeypatch.setenv("DISPLAY_SKIP_UNCHANGED", value)
+    assert Settings().display_skip_unchanged is expected  # type: ignore[call-arg]

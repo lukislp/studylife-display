@@ -124,12 +124,22 @@ def check_auto_window(value: str) -> str:
 
 
 MAX_RECAP_MINUTES = 240
+MAX_REDRAW_AFTER_MINUTES = 1440
 
 
 def check_recap_minutes(value: int) -> int:
     if not 0 <= value <= MAX_RECAP_MINUTES:
         raise ValueError(
             f"DISPLAY_AUTO_RECAP_MINUTES must be between 0 and {MAX_RECAP_MINUTES}, not {value}"
+        )
+    return value
+
+
+def check_redraw_after_minutes(value: int) -> int:
+    if not 0 <= value <= MAX_REDRAW_AFTER_MINUTES:
+        raise ValueError(
+            "DISPLAY_REDRAW_AFTER_MINUTES must be between 0 and "
+            f"{MAX_REDRAW_AFTER_MINUTES}, not {value}"
         )
     return value
 
@@ -239,6 +249,16 @@ class Settings(BaseSettings):
     # scheduled `run` at or after it clears the panel to white before drawing the frame.
     # It runs inside quiet hours too, being the one refresh that matters. Empty = off.
     display_clear_at: str = "04:00"
+
+    # A full refresh flickers and wears the panel, so a frame that looks the same as the one
+    # already on it (the header's fetch time does not count) is not drawn again. Set false to
+    # draw on every run like before.
+    display_skip_unchanged: bool = True
+
+    # Still redraw an unchanged frame once the last real draw is this many minutes old, so the
+    # panel is refreshed at least that often (ghosting, and the header time stays honest).
+    # 0 = no age limit: the daily clear is then the only guarantee.
+    display_redraw_after_minutes: int = 60
 
     # Whether the web interface may ask GitHub (once per six hours, cached in the state
     # directory) whether a newer release exists. Off by default: nothing on the Pi talks to
@@ -362,6 +382,11 @@ class Settings(BaseSettings):
     def _recap_minutes(cls, value: int) -> int:
         return check_recap_minutes(value)
 
+    @field_validator("display_redraw_after_minutes")
+    @classmethod
+    def _redraw_after_minutes(cls, value: int) -> int:
+        return check_redraw_after_minutes(value)
+
     @field_validator("display_duo")
     @classmethod
     def _duo(cls, value: str) -> str:
@@ -390,6 +415,8 @@ class WebOverrides(BaseModel):
     rotate: int | None = None
     quiet_hours: str | None = None
     clear_at: str | None = None
+    skip_unchanged: bool | None = None
+    redraw_after_minutes: int | None = None
     update_check: bool | None = None
     auto_review: str | None = None
     auto_agenda: str | None = None
@@ -428,6 +455,11 @@ class WebOverrides(BaseModel):
     def _auto_window(cls, value: str | None) -> str | None:
         return None if value is None else check_auto_window(value)
 
+    @field_validator("redraw_after_minutes")
+    @classmethod
+    def _redraw_after_minutes(cls, value: int | None) -> int | None:
+        return None if value is None else check_redraw_after_minutes(value)
+
     @field_validator("auto_recap_minutes")
     @classmethod
     def _recap_minutes(cls, value: int | None) -> int | None:
@@ -445,6 +477,8 @@ OVERRIDE_FIELDS: dict[str, str] = {
     "rotate": "display_rotate",
     "quiet_hours": "display_quiet_hours",
     "clear_at": "display_clear_at",
+    "skip_unchanged": "display_skip_unchanged",
+    "redraw_after_minutes": "display_redraw_after_minutes",
     "update_check": "display_update_check",
     "auto_review": "display_auto_review",
     "auto_agenda": "display_auto_agenda",

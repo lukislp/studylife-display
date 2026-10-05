@@ -354,6 +354,8 @@ class TestSettings:
             "rotate": False,
             "quiet_hours": False,
             "clear_at": False,
+            "skip_unchanged": False,
+            "redraw_after_minutes": False,
             "update_check": False,
             "auto_review": False,
             "auto_agenda": False,
@@ -407,6 +409,45 @@ class TestSettings:
         status, body = client.json("POST", "/api/settings", {"auto_recap_minutes": None})
         assert body["values"]["auto_recap_minutes"] == 10
         assert body["sources"]["auto_recap_minutes"] is False
+
+    def test_frame_skipping_settings_round_trip_validation_and_reset(
+        self, client: Client, settings: Settings
+    ) -> None:
+        _, body = client.json("GET", "/api/settings")
+        assert body["values"]["skip_unchanged"] is True
+        assert body["values"]["redraw_after_minutes"] == 60
+        status, body = client.json(
+            "POST", "/api/settings", {"skip_unchanged": False, "redraw_after_minutes": 0}
+        )
+        assert status == 200
+        assert body["values"]["skip_unchanged"] is False
+        assert body["values"]["redraw_after_minutes"] == 0
+        assert body["sources"]["skip_unchanged"] is True
+        assert body["sources"]["redraw_after_minutes"] is True
+        saved = json.loads(settings_path(settings).read_text(encoding="utf-8"))
+        assert saved == {"skip_unchanged": False, "redraw_after_minutes": 0}
+        status, body = client.json("POST", "/api/settings", {"redraw_after_minutes": 1440})
+        assert status == 200 and body["values"]["redraw_after_minutes"] == 1440
+        # Strict types: no "yes", no 1 for a bool, no true or "5" for the minutes.
+        for payload in (
+            {"redraw_after_minutes": 1441},
+            {"redraw_after_minutes": -1},
+            {"redraw_after_minutes": "5"},
+            {"redraw_after_minutes": True},
+            {"redraw_after_minutes": 1.5},
+            {"skip_unchanged": "yes"},
+            {"skip_unchanged": 1},
+            {"skip_unchanged": "true"},
+        ):
+            status, _ = client.json("POST", "/api/settings", payload)
+            assert status == 400, payload
+        status, body = client.json("POST", "/api/settings", {"skip_unchanged": None})
+        assert body["values"]["skip_unchanged"] is True
+        assert body["sources"]["skip_unchanged"] is False
+        status, body = client.json("POST", "/api/settings/reset")
+        assert status == 200
+        assert body["values"]["redraw_after_minutes"] == 60
+        assert body["sources"]["redraw_after_minutes"] is False
 
     def test_reset_clears_the_recap_minutes(self, client: Client) -> None:
         client.json("POST", "/api/settings", {"auto_recap_minutes": 99})
