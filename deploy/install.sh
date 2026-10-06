@@ -323,14 +323,21 @@ if [ ! -f "$ENV_FILE" ]; then
   echo "==> writing template $ENV_FILE (fill in the key!)"
   PLACEHOLDER_URL="https://studylife.example.com"
   STUDYLIFE_URL="$PLACEHOLDER_URL"
+  if [ "$IMAGE_MODE" -eq 1 ]; then
+    # No address in the image: empty means "no server chosen yet", and the display then offers
+    # to search the network for one (the panel's setup screen and the web interface's Server
+    # page). A placeholder here would win over that search for good.
+    STUDYLIFE_URL=""
+  fi
   if [ "$HAVE_TTY" -eq 1 ]; then
     echo
-    echo "StudyLife instance URL (the server this display reads from):"
+    echo "StudyLife instance URL (the server this display reads from; Enter = leave it empty"
+    echo "and pick the server from the display's web interface, which searches the network):"
     while :; do
       printf 'STUDYLIFE_BASE_URL [e.g. https://studylife.example.com]: '
       IFS= read -r STUDYLIFE_URL
       case "$STUDYLIFE_URL" in
-        http://*|https://*) break ;;
+        ''|http://*|https://*) break ;;
         *) echo "needs to start with http:// or https://, please" ;;
       esac
     done
@@ -520,12 +527,13 @@ systemctl restart studylife-display-web.service || true
 # The URL prompt above already wrote a real STUDYLIFE_BASE_URL for a fresh, interactive
 # install; anything else (unattended install, or a pre-existing env file) still has the
 # placeholder and needs the manual-edit step spelled out.
-if grep -q '^STUDYLIFE_BASE_URL=https://studylife\.example\.com$' "$ENV_FILE" 2>/dev/null; then
+if grep -Eq '^STUDYLIFE_BASE_URL=(https://studylife\.example\.com)?$' "$ENV_FILE" 2>/dev/null; then
   cat <<EOF
 
 Installed. Next steps:
-  1. sudo nano $ENV_FILE            # STUDYLIFE_BASE_URL
-  2. sudo systemctl restart studylife-display-web.service
+  1. http://$(hostname).local:8795/server    # pick your StudyLife server (searches the network),
+     or: sudo nano $ENV_FILE  # STUDYLIFE_BASE_URL, then restart the web service
+  2. sudo systemctl restart studylife-display-web.service   # only after editing the file
   3. http://$(hostname).local:8795/connect   # connect the account (no key to copy);
      the panel shows this URL as a QR code until a key is applied
      or put the key into $ENV_FILE by hand and run

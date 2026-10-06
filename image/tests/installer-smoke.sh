@@ -87,6 +87,16 @@ bash "$WORK/deploy/install.sh" --image --local >/dev/null
 check "re-running keeps SPI on exactly once" test "$(grep -c 'dtparam=spi=on' /boot/firmware/config.txt)" = 1
 check "env file has the default panel" grep -qx 'DISPLAY_PANEL=waveshare_7in5_v2' /etc/studylife-display.env
 check "env file has no web token" test "$(grep -c '^DISPLAY_WEB_TOKEN=' /etc/studylife-display.env)" = 0
+check "env file has no server address (so discovery can run)" test "$(grep -Ec '^STUDYLIFE_BASE_URL=.' /etc/studylife-display.env)" = 0
+# The no-server state, file driver, no network: check refuses cleanly, run draws the screen.
+nosrv() { ( set -a; . /etc/studylife-display.env; set +a; DISPLAY_DRIVER=file   DISPLAY_OUTPUT_PATH=/tmp/nosrv.png DISPLAY_STATE_PATH=/tmp/nosrv/last.json "$@" ); }
+mkdir -p /tmp/nosrv
+check "no server: run exits 0 and draws the choose-your-server screen"   nosrv /opt/studylife-display/venv/bin/studylife-display run
+check "no server: the frame was written" test -s /tmp/nosrv.png
+check_not "no server: check exits non-zero, not a crash" nosrv /opt/studylife-display/venv/bin/studylife-display check
+out="$(nosrv /opt/studylife-display/venv/bin/studylife-display check 2>&1 || true)"
+check "no server: check says so" contains "$out" "no StudyLife server configured"
+check_not "no server: check did not crash with a traceback" contains "$out" "Traceback"
 check "service account exists" id studylife-display
 check "state directory is empty" test -z "$(ls -A /var/lib/studylife-display)"
 check "no TLS key in the image" test ! -e /etc/studylife-display-tls.key

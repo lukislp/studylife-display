@@ -621,14 +621,14 @@ through the Raspberry Pi Imager as for any other Raspberry Pi OS card.
    from cloud-init files (`user-data`, `network-config`) on the boot partition, which the
    Imager writes. If the Imager does not offer the customisation for the custom file, use
    the `--repo` way above, which tells it the image is a cloud-init Raspberry Pi OS image.
-4. **Optional, before the first boot: tell it your StudyLife server.** Put the card back into
+4. **Optional, before the first boot: settings.** Put the card back into
    the PC (the Imager ejects it), open the `studylife-display/setup.env` file on the boot
    partition (the small FAT partition, called `bootfs`), remove the `#` in front of the lines
    you want and save:
 
    | Line | Meaning |
    | --- | --- |
-   | `STUDYLIFE_BASE_URL=https://studylife.example.com` | Your StudyLife server. Connecting the account needs it |
+   | `STUDYLIFE_BASE_URL=https://studylife.example.com` | Optional: pre-seed your StudyLife server's address. Leave it out and the display finds the server itself (step 6); an address set here always wins over a server chosen later in the web interface |
    | `DISPLAY_WEB_TOKEN=...` | Password of the display's web interface, at least 12 characters. If you leave it out, a random one is generated (below) |
    | `DISPLAY_PANEL=...` | The attached panel, one of the keys in [Supported panels](#supported-panels); the default is `waveshare_7in5_v2` |
    | `DISPLAY_ROTATE`, `DISPLAY_LANGUAGE`, `STUDYLIFE_TIMEZONE` | As in the [configuration table](#studylife-setup) |
@@ -636,20 +636,28 @@ through the Raspberry Pi Imager as for any other Raspberry Pi OS card.
    On the next boot the values move into `/etc/studylife-display.env` and the lines in
    `setup.env` are replaced by a comment, so a token does not stay on the card. Only these
    keys are read, and each value is checked (letters, digits and `. _ : / @ + = ~ -`).
-   Without this step, set `STUDYLIFE_BASE_URL` over SSH in `/etc/studylife-display.env`
-   and restart the web service, exactly as in step 3 of the [manual
-   install](#install-on-an-existing-system).
+   Nothing here is required: the image ships with **no server address**, on purpose.
 5. **Boot the Pi** with the panel attached. The first boot takes a few minutes (the stock
    image expands its filesystem and applies the Imager's settings; it may reboot once). A
    minute or so after it is up, the panel shows the [setup screen](#setup-screen): a QR code
-   and the address `http://<hostname>.local:8795/connect`. Nothing is shown before the
-   account is connected, by design.
-6. **Connect the account.** Scan the QR code or type the address, sign in with the web
-   token (the one from `setup.env`, or the generated one: it is written to
+   and the address of the display's web page. With no server address configured, the
+   screen says "choose your StudyLife server at <display>/server". Nothing is shown before
+   the account is connected, by design.
+6. **Pick the server and connect the account.** Open that address on a phone or PC in the
+   same network, sign in with the web token (the one from `setup.env`, or the generated one: it is written to
    `studylife-display/web-token.txt` on the boot partition, and `sudo grep DISPLAY_WEB_TOKEN
    /etc/studylife-display.env` shows it over SSH; delete the file after noting it, anyone
-   holding the card can read it) and follow [Connecting the account](#connecting-the-account).
-   The first refresh runs by itself and replaces the setup screen with the dashboard.
+   holding the card can read it), open the *Server* page, let it search the network (mDNS)
+   and pick your StudyLife server, then connect the account as in
+   [Connecting the account](#connecting-the-account). The first refresh runs by itself and
+   replaces the setup screen with the dashboard. Zero configuration: no address to type.
+
+   Prerequisites for the search, details in [Finding your StudyLife
+   server](#finding-your-studylife-server): the StudyLife server's mDNS announcement is
+   **opt-in** on the server side (`docs/MDNS.md` in the `lukislp/studylife` repository), and
+   mDNS does not cross VLANs or subnets without a reflector (an Avahi reflector or the
+   router's mDNS repeater). If nothing is found, type the address on the same page, or
+   pre-seed it in `setup.env` (step 4).
 
 What is *not* in the image, because it must differ per device: the TLS certificate (made on
 the first boot for `<hostname>.local`), the web token, the API key, the SSH host keys, the
