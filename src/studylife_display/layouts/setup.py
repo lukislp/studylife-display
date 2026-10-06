@@ -37,11 +37,13 @@ SETUP_TEXT: dict[str, dict[str, str]] = {
     "de": {
         "headline": "Einrichtung",
         "line": "Konto verbinden unter:",
+        "server_line": "StudyLife-Server wählen unter:",
         "footer": "Hostname: {hostname}",
     },
     "en": {
         "headline": "Setup",
         "line": "Connect your account at:",
+        "server_line": "Choose your StudyLife server at:",
         "footer": "Hostname: {hostname}",
     },
 }
@@ -115,10 +117,17 @@ def draw_qr(draw: ImageDraw.ImageDraw, placement: QrPlacement) -> None:
 
 
 def render_setup(
-    url: str, language: str, hostname: str, now: datetime | None = None
+    url: str,
+    language: str,
+    hostname: str,
+    now: datetime | None = None,
+    *,
+    choose_server: bool = False,
 ) -> Image.Image:
     """An 800x480 mode "1" frame: headline, "connect at:", `url` large on the left, its QR
-    code on the right, the hostname in a small line at the bottom, `now` in the header."""
+    code on the right, the hostname in a small line at the bottom, `now` in the header.
+    `choose_server` swaps the line for "choose your StudyLife server at:" - the variant for
+    a display that has no server configured yet (the frame is otherwise the same)."""
     t = TEXT[language]
     words = SETUP_TEXT[language]
     fonts = load_fonts()
@@ -134,7 +143,8 @@ def render_setup(
     max_width = text_right - MARGIN
     headline = ellipsize(words["headline"], fonts.title, max_width)
     draw_text(draw, (MARGIN, HEADLINE_BASELINE), headline, fonts.title)
-    draw_text(draw, (MARGIN, LINE_BASELINE), words["line"], fonts.body)
+    line = words["server_line" if choose_server else "line"]
+    draw_text(draw, (MARGIN, LINE_BASELINE), ellipsize(line, fonts.body, max_width), fonts.body)
     url_font = font_fitting(url, URL_FONT_SIZES, max_width)
     draw_text(draw, (MARGIN, URL_BASELINE), ellipsize(url, url_font, max_width), url_font)
 

@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from studylife_display.auto_rules import parse_rule_window
 from studylife_display.daily_clear import parse_clear_at
+from studylife_display.discovery import InvalidServerUrl, normalise_instance_id, validate_server_url
 from studylife_display.panels import DEFAULT_PANEL, PANELS, PanelProfile, unknown_panel_message
 from studylife_display.quiet_hours import parse_quiet_hours
 
@@ -207,8 +208,19 @@ class Settings(BaseSettings):
     # liability sitting on an SD card, not a convenience.
     # The key may be empty until the account is connected from the web interface, which
     # writes it into the environment file through `credentials-apply`.
-    studylife_base_url: AnyHttpUrl
+    # The base URL is optional: empty means "no server chosen yet" - the panel then shows the
+    # "choose your server" screen and the web interface offers to search the network
+    # (discovery.py). The chosen server is kept in settings.json (see `effective_settings`);
+    # a URL set here always wins over it, exactly as before discovery existed.
+    studylife_base_url: AnyHttpUrl | None = None
     studylife_api_key: str = ""
+    # Which server STUDYLIFE_API_KEY was obtained from, written next to the key by
+    # `credentials-apply`. Only consulted when the server comes from settings.json: a key is
+    # never sent to a server it was not issued by.
+    studylife_api_key_instance: str = ""
+    # Filled by `effective_settings` from settings.json (the instance id the chosen server
+    # answered with); not meant to be set in the environment.
+    studylife_server_id: str = ""
 
     # Every DateTime StudyLife sends is naive local time of the SERVER (no offset in the JSON).
     # Timestamps are interpreted in this zone explicitly, never with the Pi's own clock
@@ -364,6 +376,18 @@ class Settings(BaseSettings):
     def panel(self) -> PanelProfile:
         return PANELS[self.display_panel]
 
+    @field_validator("studylife_base_url", mode="before")
+    @classmethod
+    def _empty_base_url(cls, value: object) -> object:
+        """`STUDYLIFE_BASE_URL=` (what install.sh writes when no address was given) is "no
+        server", not an invalid URL."""
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @property
+    def server_url(self) -> str:
+        """The configured server's base URL without a trailing slash, "" when there is none."""
+        return "" if self.studylife_base_url is None else str(self.studylife_base_url).rstrip("/")
+
     @field_validator("display_rotate")
     @classmethod
     def _rotation(cls, value: int) -> int:
@@ -443,11 +467,36 @@ class WebOverrides(BaseModel):
     auto_quiet: str | None = None
     auto_recap_minutes: int | None = None
     duo: str | None = None
+    # The server chosen in the web interface (used only while STUDYLIFE_BASE_URL is empty)
+    # and the instance id it answered with. Deliberately not in OVERRIDE_FIELDS: they are
+    # not simple overrides of a Settings field (see `settings_store.effective_settings`).
+    server_url: str | None = None
+    server_id: str | None = None
 
     @field_validator("layout", mode="before")
     @classmethod
     def _layout_alias(cls, value: object) -> object:
         return _canonical_layout_value(value)
+
+    @field_validator("server_url")
+    @classmethod
+    def _server_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return validate_server_url(value)
+        except InvalidServerUrl as exc:
+            raise ValueError(f"server_url: {exc}") from exc
+
+    @field_validator("server_id")
+    @classmethod
+    def _server_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalised = normalise_instance_id(value)
+        if normalised is None:
+            raise ValueError("server_id must be 32 hexadecimal characters")
+        return normalised
 
     @field_validator("rotate")
     @classmethod

@@ -30,13 +30,15 @@ STALE_DEGRADED_MINUTES = 15
 
 def health_report(settings: Settings, now: datetime) -> tuple[dict[str, Any], HTTPStatus]:
     """The JSON for /healthz (and /api/state) and its HTTP status: "setup" (200) while no
-    API key is configured at all (the panel shows the setup screen; `setup` is true), "ok"
+    server is chosen or no API key is configured at all (the panel shows the setup screen;
+    `setup` is true, `server_configured` says which of the two is missing), "ok"
     (200) when the last fetch succeeded and the snapshot is fresh, "degraded" (200) when the
     last fetch failed but a cached dashboard is shown or the snapshot is older than
     STALE_DEGRADED_MINUTES outside quiet hours, "error" (503) when the key was rejected or
     there is no data at all."""
     settings = effective_settings(settings)
-    setup = not settings.studylife_api_key
+    server_configured = bool(settings.server_url)
+    setup = not server_configured or not settings.studylife_api_key
     tz = zone(settings.studylife_timezone)
     state_path = Path(settings.display_state_path)
     status = load_status(state_path.parent, tz)
@@ -81,6 +83,7 @@ def health_report(settings: Settings, now: datetime) -> tuple[dict[str, Any], HT
     report: dict[str, Any] = {
         "status": state,
         "setup": setup,
+        "server_configured": server_configured,
         "version": package_version(),
         "id": instance_id(state_path.parent),
         "last_fetch_at": None if last_fetch_at is None else last_fetch_at.isoformat(),
