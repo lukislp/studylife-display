@@ -49,6 +49,7 @@ if [ -d "$state" ]; then
 fi
 env_file="$ROOT/etc/studylife-display.env"
 if [ -f "$env_file" ]; then
+  grep -Eq '^STUDYLIFE_BASE_URL=.' "$env_file" && fail "STUDYLIFE_BASE_URL is set in /etc/studylife-display.env (the image ships none, so the display can discover a server)"
   for key in STUDYLIFE_API_KEY DISPLAY_WEB_TOKEN DISPLAY_API_TOKEN DISPLAY_PUBLIC_BASE_URL; do
     grep -Eq "^$key=.+" "$env_file" && fail "$key has a value in /etc/studylife-display.env"
   done
