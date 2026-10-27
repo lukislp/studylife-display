@@ -65,8 +65,9 @@ jobs:
 
   build:
     # x64 + qemu-user-static rather than the arm runner, because harden-runner (the egress
-    # allowlist below) does not support arm runners.
-    runs-on: ubuntu-latest
+    # allowlist below) does not support arm runners. Pinned to 24.04: ubuntu-latest moved to Ubuntu 26,
+    # where qemu-user-static has no installation candidate.
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     outputs:
       tag: ${{ steps.plan.outputs.tag }}
