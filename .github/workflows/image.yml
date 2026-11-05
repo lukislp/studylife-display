@@ -45,7 +45,7 @@ jobs:
     # Debian container (native on this runner, no emulation) - fast feedback before the
     # image build, and the only place the "scanner must fail on a booted system" and the
     # setup.env import cases run.
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 30
     steps:
       # No harden-runner here: it does not support arm runners in the community tier ("ARM
@@ -64,10 +64,11 @@ jobs:
             bash /repo/image/tests/installer-smoke.sh
 
   build:
-    # x64 + qemu-user-static rather than the arm runner, because harden-runner (the egress
-    # allowlist below) does not support arm runners. Pinned to 24.04: ubuntu-latest moved to Ubuntu 26,
-    # where qemu-user-static has no installation candidate.
-    runs-on: ubuntu-24.04
+    # x64 + QEMU user emulation rather than the arm runner, because harden-runner (the egress
+    # allowlist below) does not support arm runners. The Ubuntu release is named explicitly: the
+    # qemu package set differs between releases (see the install step), so a silent move of
+    # ubuntu-latest must not change it underneath the build.
+    runs-on: ubuntu-26.04
     timeout-minutes: 120
     outputs:
       tag: ${{ steps.plan.outputs.tag }}
@@ -80,7 +81,7 @@ jobs:
           egress-policy: block
           # What the build talks to: GitHub (checkout, artifacts, the release tag and the
           # Waveshare driver repository), the pinned base image on downloads.raspberrypi.com,
-          # the Ubuntu mirrors (qemu-user-static on the runner), and - from inside the chroot -
+          # the Ubuntu mirrors (qemu-user-binfmt on the runner), and - from inside the chroot -
           # Debian and the Raspberry Pi archive (apt, plain http as in the stock image),
           # PyPI and piwheels.
           allowed-endpoints: >
@@ -142,13 +143,17 @@ jobs:
           ref: ${{ steps.plan.outputs.tag != '' && format('refs/tags/{0}', steps.plan.outputs.tag) || '' }}
           fetch-depth: 0
           fetch-tags: true
-      - name: Install qemu-user-static (runs the arm64 chroot)
+      - name: Install QEMU user emulation (runs the arm64 chroot)
         run: |
           # Only the Ubuntu archive is refreshed: the runner image carries other apt sources
           # whose hosts the egress policy does not (and should not) allow.
           sudo apt-get update -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources             -o Dir::Etc::sourceparts=-
-          sudo apt-get install -y --no-install-recommends qemu-user-static
-          update-binfmts --display qemu-aarch64 || true
+          # Ubuntu 26.04 (qemu 10.x, as Debian since 1:10.0.3+ds-4) has no qemu-user-static
+          # package any more: the statically linked emulators are in qemu-user, and
+          # qemu-user-binfmt registers them with the kernel (binfmt_misc, flag F: the host binary
+          # is used inside the chroot). On a 24.04 host the equivalent is qemu-user-static.
+          sudo apt-get install -y --no-install-recommends qemu-user-binfmt
+          cat /proc/sys/fs/binfmt_misc/qemu-aarch64
       - name: Disk before the build
         run: df -h / /mnt
       - name: Build the image
