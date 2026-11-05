@@ -919,7 +919,8 @@ nothing published; the image is kept three days as an artifact). It downloads th
 stock Raspberry Pi OS Lite image (`image/base-image.env`: URL and SHA-256, bumped by hand),
 runs `deploy/install.sh --image` in a chroot, verifies the installation, cleans, scans for
 per-device artifacts and compresses it. Locally, on a Linux host with the tools listed in
-`image/build-image.sh` (and `qemu-user-static` when it is not arm64):
+`image/build-image.sh` (and, when it is not arm64, `qemu-user-binfmt` on Ubuntu 26.04 or
+`qemu-user-static` on older hosts):
 
 ```bash
 sudo image/build-image.sh --version 0.0.0-local --local --out dist                    # this checkout

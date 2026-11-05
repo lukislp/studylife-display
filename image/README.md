@@ -5,8 +5,8 @@ Maintainer notes for the ready-made image (the user-facing steps are in the top-
 
 ## What the build does
 
-`build-image.sh` (run as root; CI uses a native arm64 runner, so no emulation; on an x86-64
-host it falls back to `qemu-user-static`):
+`build-image.sh` (run as root; on an x86-64 host, CI included, the chroot runs under QEMU user
+emulation: `qemu-user-binfmt` on Ubuntu 26.04, `qemu-user-static` on older hosts):
 
 1. Downloads the stock Raspberry Pi OS Lite arm64 image named in `base-image.env` and checks
    its SHA-256 against the pin in that file (a mismatch aborts the build).

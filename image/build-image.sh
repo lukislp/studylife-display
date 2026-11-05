@@ -6,7 +6,8 @@
 #   sudo image/build-image.sh --version 0.0.0-pr --local --out dist          # PR build
 #
 # Needs root, a Debian/Ubuntu host with: curl xz-utils util-linux e2fsprogs fdisk git systemd
-# (and qemu-user-static + binfmt-support when the host is not arm64).
+# (and, when the host is not arm64, a binfmt-registered static arm64 emulator: qemu-user-binfmt
+# on Ubuntu 26.04 / recent Debian, qemu-user-static on older hosts).
 # No third-party actions, no container images: plain tools. Produces in --out:
 #   studylife-display-<version>.img.xz          the image
 #   studylife-display-<version>.img.xz.sha256   its checksum
@@ -108,9 +109,13 @@ df -h "$MNT"
 
 # ------------------------------------------------------------------ 3. chroot
 if [ "$(uname -m)" != "aarch64" ]; then
-  log "host is $(uname -m): using qemu-user-static"
-  command -v qemu-aarch64-static >/dev/null || { echo "qemu-user-static is not installed" >&2; exit 1; }
-  install -m 0755 "$(command -v qemu-aarch64-static)" "$MNT/usr/bin/qemu-aarch64-static"
+  # qemu-user-static ships qemu-aarch64-static; since qemu 10 (Ubuntu 26.04, Debian) the static
+  # emulator is plain qemu-aarch64 from qemu-user, registered by qemu-user-binfmt. The copy into
+  # the chroot serves hosts whose binfmt registration lacks the F (fix-binary) flag.
+  QEMU_AARCH64="$(command -v qemu-aarch64-static || command -v qemu-aarch64 || true)"
+  [ -n "$QEMU_AARCH64" ] || { echo "no arm64 user emulator: install qemu-user-binfmt (Ubuntu 26.04+) or qemu-user-static" >&2; exit 1; }
+  log "host is $(uname -m): using $QEMU_AARCH64"
+  install -m 0755 "$QEMU_AARCH64" "$MNT/usr/bin/qemu-aarch64-static"
 fi
 # Plain (non-recursive) mounts on purpose: a recursive bind of /dev and /sys leaves the root
 # filesystem's block device "in use" after everything is unmounted again (e2fsck refuses to
