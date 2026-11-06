@@ -3,7 +3,7 @@ name: SD-card image
 # Builds the flashable SD-card image (image/build-image.sh) and, for a release, attaches it to
 # the GitHub release.
 #
-#  - workflow_call: ci.yml calls this right after semantic-release has created the release.
+#  - workflow_call: ci.yml calls this right after the release job has created the release.
 #    A release created with the workflow's own GITHUB_TOKEN does NOT trigger `release`
 #    events for other workflows, so `on: release` would never fire; calling the workflow from
 #    the job that knows the new version is the trigger that really runs.

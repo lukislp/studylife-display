@@ -912,7 +912,7 @@ before showing it, the layouts (and their golden frames) stay upright.
 ## Building the image
 
 `.github/workflows/image.yml` builds the image: on every release (called from `ci.yml` right
-after semantic-release, because a release created with `GITHUB_TOKEN` does not trigger
+after the lktec-bot release module has tagged the release, because a release created with `GITHUB_TOKEN` does not trigger
 `release` events), on `workflow_dispatch` (with a tag it re-attaches the image to that
 release), and on pull requests that touch `image/`, `deploy/` or the workflow (build + scan,
 nothing published; the image is kept three days as an artifact). It downloads the pinned
