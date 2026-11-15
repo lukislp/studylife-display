@@ -2,7 +2,7 @@
 
 Three kinds, keyed like the error kinds in `status_store`:
 
-- `rejected`: StudyLife answered 401/403. A rejected key does not heal itself, so the panel
+- `rejected`: StudyAtrium answered 401/403. A rejected key does not heal itself, so the panel
   says so instead of showing an ever-older cached dashboard.
 - `stale`: the cached snapshot is older than DISPLAY_STALE_ERROR_HOURS. Up to then the
   dashboard is shown with the stale marker; past it, the numbers are not worth trusting.
@@ -38,34 +38,34 @@ ERROR_TEXT: dict[str, dict[str, dict[str, str]]] = {
     "de": {
         "rejected": {
             "headline": "Schlüssel abgelehnt",
-            "line1": "StudyLife hat den API-Schlüssel abgelehnt ({detail}).",
+            "line1": "StudyAtrium hat den API-Schlüssel abgelehnt ({detail}).",
             "line2": "STUDYLIFE_API_KEY und die Scopes des Schlüssels prüfen.",
         },
         "stale": {
             "headline": "Daten veraltet",
             "line1": "Der letzte erfolgreiche Abruf liegt {detail} zurück.",
-            "line2": "Verbindung zur StudyLife-Instanz und das Protokoll prüfen.",
+            "line2": "Verbindung zur StudyAtrium-Instanz und das Protokoll prüfen.",
         },
         "no_data": {
             "headline": "Keine Daten",
-            "line1": "Noch kein Zwischenspeicher und StudyLife ist nicht erreichbar.",
+            "line1": "Noch kein Zwischenspeicher und StudyAtrium ist nicht erreichbar.",
             "line2": "STUDYLIFE_BASE_URL, Netzwerk und Schlüssel prüfen.",
         },
     },
     "en": {
         "rejected": {
             "headline": "API key rejected",
-            "line1": "StudyLife rejected the API key ({detail}).",
+            "line1": "StudyAtrium rejected the API key ({detail}).",
             "line2": "Check STUDYLIFE_API_KEY and the key's scopes.",
         },
         "stale": {
             "headline": "Data is stale",
             "line1": "The last successful fetch was {detail} ago.",
-            "line2": "Check the connection to the StudyLife instance and the log.",
+            "line2": "Check the connection to the StudyAtrium instance and the log.",
         },
         "no_data": {
             "headline": "No data",
-            "line1": "No cache yet and StudyLife is unreachable.",
+            "line1": "No cache yet and StudyAtrium is unreachable.",
             "line2": "Check STUDYLIFE_BASE_URL, the network and the key.",
         },
     },

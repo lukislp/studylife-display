@@ -1,5 +1,5 @@
 [Unit]
-Description=StudyLife e-paper dashboard (copy the layout choice to the boot partition)
+Description=StudyAtrium e-paper dashboard (copy the layout choice to the boot partition)
 Documentation=https://github.com/lukislp/studylife-display
 
 [Service]

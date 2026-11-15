@@ -136,7 +136,7 @@ RESETTABLE_KEYS = tuple(key for key in OVERRIDE_FIELDS if key != "layout")
 
 WEB_TEXT: dict[str, dict[str, str]] = {
     "de": {
-        "title": "StudyLife Display",
+        "title": "StudyAtrium Display",
         "login_heading": "Anmelden",
         "token_label": "Zugriffstoken",
         "login_button": "Anmelden",
@@ -202,7 +202,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         # -- connect page
         "connect_heading": "Verbinden",
         "connect_intro": (
-            "Verbindet dieses Display mit deinem StudyLife-Konto auf {instance}, ohne einen "
+            "Verbindet dieses Display mit deinem StudyAtrium-Konto auf {instance}, ohne einen "
             "Schlüssel abzutippen. Der Client „{client}“ muss auf der Instanz registriert sein, "
             "mit den Scopes {scopes} und der Redirect-URI {redirect_uri} (siehe README)."
         ),
@@ -221,7 +221,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "connect_restart": "Neuen Link erzeugen",
         "connect_valid_until": "Link gültig bis {time}.",
         "connect_step_open": (
-            "1. Diesen Link auf einem beliebigen Gerät öffnen, in StudyLife anmelden und die "
+            "1. Diesen Link auf einem beliebigen Gerät öffnen, in StudyAtrium anmelden und die "
             "Verbindung bestätigen:"
         ),
         "connect_step_paste": (
@@ -247,13 +247,13 @@ WEB_TEXT: dict[str, dict[str, str]] = {
             "In der eingefügten Adresse fehlt die Bestätigung (assertion=…)."
         ),
         "connect_flash_exchange_rejected": (
-            "StudyLife hat die Bestätigung nicht angenommen – sie ist verbraucht oder abgelaufen."
+            "StudyAtrium hat die Bestätigung nicht angenommen – sie ist verbraucht oder abgelaufen."
         ),
-        "connect_flash_exchange_failed": "StudyLife hat die Verbindung abgelehnt ({detail}).",
-        "connect_flash_unreachable": "StudyLife ist nicht erreichbar ({detail}).",
+        "connect_flash_exchange_failed": "StudyAtrium hat die Verbindung abgelehnt ({detail}).",
+        "connect_flash_unreachable": "StudyAtrium ist nicht erreichbar ({detail}).",
         "connect_flash_write_failed": "Der Schlüssel konnte nicht abgelegt werden ({detail}).",
         # -- server page
-        "server_heading": "StudyLife-Server",
+        "server_heading": "StudyAtrium-Server",
         "server_current": "Verwendeter Server: {url}",
         "server_none": "Noch kein Server gewählt.",
         "server_source_env": (
@@ -269,14 +269,14 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         ),
         "server_search_heading": "Im Netzwerk suchen",
         "server_search_note": (
-            "Sucht per mDNS nach StudyLife-Servern im selben Netz. Ein Fund ist nur ein "
+            "Sucht per mDNS nach StudyAtrium-Servern im selben Netz. Ein Fund ist nur ein "
             "Vorschlag: nichts wird verbunden oder geändert, bis du einen Server auswählst, und "
             "jeder Vorschlag wurde bei der angekündigten Adresse selbst überprüft."
         ),
         "server_search_button": "Im Netzwerk suchen",
         "server_found_heading": "Gefundene Server",
         "server_found_none": (
-            "Kein StudyLife-Server gefunden. Der Server muss die Ankündigung eingeschaltet haben "
+            "Kein StudyAtrium-Server gefunden. Der Server muss die Ankündigung eingeschaltet haben "
             "und im selben Netz (VLAN) stehen, siehe README. Alternativ unten die Adresse "
             "eintragen."
         ),
@@ -299,7 +299,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "server_next": "Nächster Schritt: Konto verbinden",
         "server_flash_saved": "Server übernommen. Als Nächstes das Konto verbinden.",
         "server_flash_saved_unverified": (
-            "Adresse übernommen, aber der Server hat sich nicht als StudyLife-Server mit "
+            "Adresse übernommen, aber der Server hat sich nicht als StudyAtrium-Server mit "
             "Instanz-ID ausgewiesen (ältere Version oder nicht erreichbar). Bitte prüfen."
         ),
         "server_flash_invalid": "Ungültige Adresse: {detail}",
@@ -310,7 +310,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "server_flash_locked": "Der Server ist per STUDYLIFE_BASE_URL festgelegt.",
         "server_flash_searched": "Suche abgeschlossen.",
         "connect_no_server": "Noch kein Server gewählt. Bitte zuerst unter „Server“ einen wählen.",
-        "setup_hint_server": "Noch kein StudyLife-Server gewählt – Server wählen unter: {url}",
+        "setup_hint_server": "Noch kein StudyAtrium-Server gewählt – Server wählen unter: {url}",
         "connect_callback_done": (
             "Schlüssel übernommen, Dienst startet neu. Dieses Fenster kann geschlossen werden."
         ),
@@ -392,7 +392,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "settings_env_source": "Umgebung",
     },
     "en": {
-        "title": "StudyLife Display",
+        "title": "StudyAtrium Display",
         "login_heading": "Sign in",
         "token_label": "Access token",
         "login_button": "Sign in",
@@ -455,7 +455,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         # -- connect page
         "connect_heading": "Connect",
         "connect_intro": (
-            "Connects this display to your StudyLife account on {instance} without copying a "
+            "Connects this display to your StudyAtrium account on {instance} without copying a "
             "key. The client “{client}” has to be registered on the instance with the scopes "
             "{scopes} and the redirect URI {redirect_uri} (see the README)."
         ),
@@ -474,7 +474,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "connect_restart": "Generate a new link",
         "connect_valid_until": "Link valid until {time}.",
         "connect_step_open": (
-            "1. Open this link on any device, sign in to StudyLife and approve the connection:"
+            "1. Open this link on any device, sign in to StudyAtrium and approve the connection:"
         ),
         "connect_step_paste": (
             "2. The browser then lands on an address starting with {redirect_uri} that it cannot "
@@ -493,13 +493,13 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "connect_flash_state_mismatch": "The pasted address does not belong to this attempt.",
         "connect_flash_missing_assertion": "The pasted address carries no approval (assertion=…).",
         "connect_flash_exchange_rejected": (
-            "StudyLife did not accept the approval – it was used already or has expired."
+            "StudyAtrium did not accept the approval – it was used already or has expired."
         ),
-        "connect_flash_exchange_failed": "StudyLife refused the connection ({detail}).",
-        "connect_flash_unreachable": "StudyLife is unreachable ({detail}).",
+        "connect_flash_exchange_failed": "StudyAtrium refused the connection ({detail}).",
+        "connect_flash_unreachable": "StudyAtrium is unreachable ({detail}).",
         "connect_flash_write_failed": "The key could not be stored ({detail}).",
         # -- server page
-        "server_heading": "StudyLife server",
+        "server_heading": "StudyAtrium server",
         "server_current": "Server in use: {url}",
         "server_none": "No server chosen yet.",
         "server_source_env": (
@@ -514,14 +514,14 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         ),
         "server_search_heading": "Search the network",
         "server_search_note": (
-            "Looks for StudyLife servers on the same network via mDNS. A result is only a "
+            "Looks for StudyAtrium servers on the same network via mDNS. A result is only a "
             "proposal: nothing is connected or changed until you pick a server, and every "
             "proposal was checked against the announced address itself."
         ),
         "server_search_button": "Search the network",
         "server_found_heading": "Servers found",
         "server_found_none": (
-            "No StudyLife server found. The server has to have its announcement switched on and "
+            "No StudyAtrium server found. The server has to have its announcement switched on and "
             "sit in the same network (VLAN), see the README. Or enter the address below."
         ),
         "server_ignored": (
@@ -542,7 +542,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "server_next": "Next step: connect the account",
         "server_flash_saved": "Server saved. Next, connect the account.",
         "server_flash_saved_unverified": (
-            "Address saved, but the server did not identify itself as a StudyLife server with an "
+            "Address saved, but the server did not identify itself as a StudyAtrium server with an "
             "instance id (older version or unreachable). Please check it."
         ),
         "server_flash_invalid": "Invalid address: {detail}",
@@ -553,7 +553,7 @@ WEB_TEXT: dict[str, dict[str, str]] = {
         "server_flash_locked": "The server is fixed by STUDYLIFE_BASE_URL.",
         "server_flash_searched": "Search finished.",
         "connect_no_server": "No server chosen yet. Choose one under Server first.",
-        "setup_hint_server": "No StudyLife server chosen yet – choose one at: {url}",
+        "setup_hint_server": "No StudyAtrium server chosen yet – choose one at: {url}",
         "connect_callback_done": (
             "Key applied, the service is restarting. You can close this window."
         ),

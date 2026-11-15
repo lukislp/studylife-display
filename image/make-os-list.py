@@ -39,10 +39,10 @@ def build(meta: dict[str, str], tag: str, release_date: str) -> dict[str, object
     return {
         "os_list": [
             {
-                "name": f"StudyLife Display {tag}",
+                "name": f"StudyAtrium Display {tag}",
                 "description": (
-                    "E-paper dashboard for the StudyLife study tracker. Raspberry Pi OS Lite "
-                    f"(64-bit, {meta['BASE_IMAGE_DATE']} base) with StudyLife Display "
+                    "E-paper dashboard for the StudyAtrium study tracker. Raspberry Pi OS Lite "
+                    f"(64-bit, {meta['BASE_IMAGE_DATE']} base) with StudyAtrium Display "
                     "preinstalled for the Waveshare 7.5 inch V2 panel. Set Wi-Fi, user and "
                     "SSH in the OS customisation; the panel shows its setup screen on first boot."
                 ),

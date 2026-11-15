@@ -1,5 +1,5 @@
 [Unit]
-Description=StudyLife e-paper dashboard (restore the layout choice from the boot partition)
+Description=StudyAtrium e-paper dashboard (restore the layout choice from the boot partition)
 Documentation=https://github.com/lukislp/studylife-display
 # Once per boot, after the boot partition is mounted and before anything reads settings.json.
 After=local-fs.target

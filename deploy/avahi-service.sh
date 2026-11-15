@@ -4,7 +4,7 @@
 #   sudo bash deploy/avahi-service.sh
 #
 # The Pi already answers <hostname>.local through avahi; this adds one service of type
-# _studylife-display._tcp, named "StudyLife Display (<hostname>)", on the web interface's
+# _studylife-display._tcp, named "StudyAtrium Display (<hostname>)", on the web interface's
 # port, with the TXT records
 #
 #   version=<package version>   tls=true|false   api=true|false   path=/   id=<instance id>
@@ -78,7 +78,7 @@ render_service() {
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <!-- Written by deploy/avahi-service.sh on every install and update; do not edit. -->
 <service-group>
-  <name replace-wildcards="yes">StudyLife Display (%h)</name>
+  <name replace-wildcards="yes">StudyAtrium Display (%h)</name>
   <service>
     <type>_studylife-display._tcp</type>
     <port>$port</port>

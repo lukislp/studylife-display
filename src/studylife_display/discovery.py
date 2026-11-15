@@ -182,7 +182,7 @@ def parse_announcement(
     if https is not None and https != url.startswith("https://"):
         return None
     return Announcement(
-        name=_clean_name(name.removesuffix("." + SERVICE_TYPE)) or "StudyLife",
+        name=_clean_name(name.removesuffix("." + SERVICE_TYPE)) or "StudyAtrium",
         url=url,
         id=normalise_instance_id(txt.get("id")),
         version=_clean_version((txt.get("version") or "").strip()),
@@ -319,7 +319,7 @@ def discover(
     try:
         raw = browse(timeout)
     except Exception as exc:
-        log.warning("search for StudyLife servers failed: %s", exc)
+        log.warning("search for StudyAtrium servers failed: %s", exc)
         raw = []
     raw = raw[:MAX_ANNOUNCEMENTS]
     announcements = [

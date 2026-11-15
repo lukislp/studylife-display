@@ -1,5 +1,5 @@
 [Unit]
-Description=StudyLife e-paper dashboard (one refresh)
+Description=StudyAtrium e-paper dashboard (one refresh)
 Documentation=https://github.com/lukislp/studylife-display
 After=network-online.target
 Wants=network-online.target

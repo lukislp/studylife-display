@@ -37,13 +37,13 @@ SETUP_TEXT: dict[str, dict[str, str]] = {
     "de": {
         "headline": "Einrichtung",
         "line": "Konto verbinden unter:",
-        "server_line": "StudyLife-Server wählen unter:",
+        "server_line": "StudyAtrium-Server wählen unter:",
         "footer": "Hostname: {hostname}",
     },
     "en": {
         "headline": "Setup",
         "line": "Connect your account at:",
-        "server_line": "Choose your StudyLife server at:",
+        "server_line": "Choose your StudyAtrium server at:",
         "footer": "Hostname: {hostname}",
     },
 }

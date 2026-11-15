@@ -293,7 +293,7 @@ def _show_setup(
     choose_server = not settings.server_url
     if choose_server:
         url = setup_server_url(settings)
-        log.info("no StudyLife server configured yet - showing the setup screen (%s)", url)
+        log.info("no StudyAtrium server configured yet - showing the setup screen (%s)", url)
     else:
         url = setup_connect_url(settings)
         log.info("no API key configured yet - showing the setup screen (%s)", url)
@@ -363,7 +363,7 @@ def refresh_panel(
         status = exc.status_code if isinstance(exc, StudyLifeApiError) else None
         message = str(exc)
         if status in REJECTED_STATUSES:
-            log.error("StudyLife rejected the API key (%s) - showing the error screen", exc)
+            log.error("StudyAtrium rejected the API key (%s) - showing the error screen", exc)
             _record(
                 state_dir,
                 tz,
@@ -538,7 +538,7 @@ def command_preview(
 def command_check(settings: Settings) -> int:
     """Calls the four endpoints and prints what the dashboard would be built from."""
     if not settings.server_url:
-        log.error("no StudyLife server configured (STUDYLIFE_BASE_URL, or the web interface)")
+        log.error("no StudyAtrium server configured (STUDYLIFE_BASE_URL, or the web interface)")
         return 2
     tz = zone(settings.studylife_timezone)
     now = datetime.now(tz)
@@ -736,7 +736,7 @@ def command_credentials_apply(settings: Settings, env_file: str) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="studylife-display",
-        description="Render the StudyLife dashboard onto the Waveshare 7.5 inch e-Paper HAT.",
+        description="Render the StudyAtrium dashboard onto the Waveshare 7.5 inch e-Paper HAT.",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     parser.add_argument("--version", action="version", version=f"%(prog)s {package_version()}")

@@ -95,7 +95,7 @@ check "no server: run exits 0 and draws the choose-your-server screen"   nosrv /
 check "no server: the frame was written" test -s /tmp/nosrv.png
 check_not "no server: check exits non-zero, not a crash" nosrv /opt/studylife-display/venv/bin/studylife-display check
 out="$(nosrv /opt/studylife-display/venv/bin/studylife-display check 2>&1 || true)"
-check "no server: check says so" contains "$out" "no StudyLife server configured"
+check "no server: check says so" contains "$out" "no StudyAtrium server configured"
 check_not "no server: check did not crash with a traceback" contains "$out" "Traceback"
 check "service account exists" id studylife-display
 check "state directory is empty" test -z "$(ls -A /var/lib/studylife-display)"
