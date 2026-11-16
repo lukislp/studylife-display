@@ -1,5 +1,5 @@
 [Unit]
-Description=StudyLife e-paper dashboard (per-device setup on boot: TLS certificate, web token, setup.env, mDNS)
+Description=StudyAtrium e-paper dashboard (per-device setup on boot: TLS certificate, web token, setup.env, mDNS)
 Documentation=https://github.com/lukislp/studylife-display
 # Image builds only (deploy/install.sh --image installs it). It runs on every boot but is
 # idempotent: each step does nothing once its result exists, so a re-run costs milliseconds.

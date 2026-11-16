@@ -126,7 +126,7 @@ def test_avahi_service_advertises_the_default_install(tmp_path: Path) -> None:
     root = ET.parse(tmp_path / "services" / "studylife-display.service").getroot()
     name = root.find("name")
     assert name is not None
-    assert name.text == "StudyLife Display (%h)"
+    assert name.text == "StudyAtrium Display (%h)"
     assert name.get("replace-wildcards") == "yes"
     service = advertised(tmp_path)
     assert (service.findtext("type") or "") == "_studylife-display._tcp"

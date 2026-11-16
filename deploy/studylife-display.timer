@@ -1,5 +1,5 @@
 [Unit]
-Description=Refresh the StudyLife e-paper dashboard every 5 minutes
+Description=Refresh the StudyAtrium e-paper dashboard every 5 minutes
 # The layout choice is restored from the boot partition first (a no-op without the overlay
 # filesystem, see README "SD-card protection").
 After=studylife-display-restore.service

@@ -1,6 +1,6 @@
-# Contributing to StudyLife Display
+# Contributing to StudyAtrium Display
 
-Thanks for taking the time. StudyLife is a single-maintainer project, so the process is deliberately
+Thanks for taking the time. StudyAtrium is a single-maintainer project, so the process is deliberately
 small - but it is the same for every change, including the maintainer's own.
 
 ## How changes get in
@@ -23,9 +23,9 @@ small - but it is the same for every change, including the maintainer's own.
 - **Tests for new functionality.** New features and bug fixes come with tests under `tests/`.
   The model and the renderer are pure functions and are tested directly; `main.py` is tested
   against a mocked API with `respx`.
-- **Wire format.** Every StudyLife JSON field the code reads is listed in `model.USED_FIELDS`
+- **Wire format.** Every StudyAtrium JSON field the code reads is listed in `model.USED_FIELDS`
   and checked by `tests/test_wire_fields.py` against the verified field names. Do not add a
-  field name you have not verified against the server: StudyLife silently ignores unknown
+  field name you have not verified against the server: StudyAtrium silently ignores unknown
   fields, so a typo renders as zero forever instead of failing.
 - **Goldens.** A deliberate layout change regenerates `tests/golden/*.png` with
   `uv run pytest --update-goldens` and `docs/preview.png` with

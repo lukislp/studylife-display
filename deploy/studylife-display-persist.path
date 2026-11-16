@@ -1,5 +1,5 @@
 [Unit]
-Description=Mirror the StudyLife dashboard's layout choice to the boot partition on change
+Description=Mirror the StudyAtrium dashboard's layout choice to the boot partition on change
 Documentation=https://github.com/lukislp/studylife-display
 # Watching starts after the boot-time restore so the first event of a boot is a real change
 # (the restore's own write is picked up by export anyway and skipped as identical).

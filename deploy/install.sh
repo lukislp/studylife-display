@@ -331,7 +331,7 @@ if [ ! -f "$ENV_FILE" ]; then
   fi
   if [ "$HAVE_TTY" -eq 1 ]; then
     echo
-    echo "StudyLife instance URL (the server this display reads from; Enter = leave it empty"
+    echo "StudyAtrium instance URL (the server this display reads from; Enter = leave it empty"
     echo "and pick the server from the display's web interface, which searches the network):"
     while :; do
       printf 'STUDYLIFE_BASE_URL [e.g. https://studylife.example.com]: '
@@ -373,14 +373,14 @@ if [ ! -f "$ENV_FILE" ]; then
   fi
   {
     cat <<'EOF'
-# StudyLife instance. The READ-ONLY API key (scopes Metrics.GetSummary, Sessions.GetAll,
+# StudyAtrium instance. The READ-ONLY API key (scopes Metrics.GetSummary, Sessions.GetAll,
 # Sessions.GetHistory, TimerState.Get) is filled in by the web interface's connect page
 # (http://<hostname>.local:8795/connect); pasting one here by hand works too.
 EOF
     printf 'STUDYLIFE_BASE_URL=%s\n' "$STUDYLIFE_URL"
     cat <<'EOF'
 STUDYLIFE_API_KEY=
-# Time zone of the StudyLife SERVER (its timestamps carry no offset).
+# Time zone of the StudyAtrium SERVER (its timestamps carry no offset).
 STUDYLIFE_TIMEZONE=Europe/Berlin
 # DISPLAY_LANGUAGE=de
 # Layout when the web interface has not chosen one yet: auto, classic, focus, exam, week,
@@ -401,7 +401,7 @@ STUDYLIFE_TIMEZONE=Europe/Berlin
 # below to work without a separate reverse proxy or Tailscale.
 # DISPLAY_TLS=false
 # Optional https URL of this web interface (a Tailscale name, or this Pi's own address with
-# DISPLAY_TLS=true above): StudyLife then redirects straight back to <url>/connect/callback
+# DISPLAY_TLS=true above): StudyAtrium then redirects straight back to <url>/connect/callback
 # when connecting the account, e.g. https://<hostname>.local:8795
 # DISPLAY_PUBLIC_BASE_URL=
 # Optional exact URL for the setup screen's QR code; empty derives it from the hostname
@@ -531,7 +531,7 @@ if grep -Eq '^STUDYLIFE_BASE_URL=(https://studylife\.example\.com)?$' "$ENV_FILE
   cat <<EOF
 
 Installed. Next steps:
-  1. http://$(hostname).local:8795/server    # pick your StudyLife server (searches the network),
+  1. http://$(hostname).local:8795/server    # pick your StudyAtrium server (searches the network),
      or: sudo nano $ENV_FILE  # STUDYLIFE_BASE_URL, then restart the web service
   2. sudo systemctl restart studylife-display-web.service   # only after editing the file
   3. http://$(hostname).local:8795/connect   # connect the account (no key to copy);

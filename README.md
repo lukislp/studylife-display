@@ -1,17 +1,19 @@
-# StudyLife Display
+# StudyAtrium Display
+
+(formerly StudyLife)
 
 [![CI](https://github.com/lukislp/studylife-display/actions/workflows/ci.yml/badge.svg)](https://github.com/lukislp/studylife-display/actions/workflows/ci.yml) [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/lukislp/studylife-display/badge)](https://scorecard.dev/viewer/?uri=github.com/lukislp/studylife-display) [![CodeQL](https://github.com/lukislp/studylife-display/actions/workflows/github-code-scanning/codeql/badge.svg)](https://github.com/lukislp/studylife-display/security/code-scanning)
 [![Release](https://img.shields.io/github/v/release/lukislp/studylife-display)](https://github.com/lukislp/studylife-display/releases)
 [![License: AGPL-3.0](https://img.shields.io/github/license/lukislp/studylife-display)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB)](https://www.python.org/)
 
-A study dashboard for [StudyLife](https://github.com/lukislp/studylife) on a 7.5" e-paper
+A study dashboard for [StudyAtrium](https://github.com/lukislp/studylife) on a 7.5" e-paper
 panel (the Waveshare 7.5" HAT V2 by default; [other panels](#supported-panels) are supported
 too): a Raspberry Pi on the desk that shows, without a screen to unlock or a tab to find,
 how today is going. It reads four read-only endpoints every five minutes and redraws the
 panel; between refreshes the Pi and the panel sleep. Seven layouts are built in, an "auto"
 mode picks between them, and a small web interface on the Pi switches them from a phone,
-connects the StudyLife account without copying a key, and holds the settings.
+connects the StudyAtrium account without copying a key, and holds the settings.
 
 Fastest start: [flash the ready-made image](#flash-the-ready-made-image) from the latest
 release and enter Wi-Fi and hostname in the Raspberry Pi Imager - no SSH, no installer.
@@ -47,7 +49,7 @@ empty = no session, light hatch = under 1 h, dense hatch = under 2.5 h, solid = 
 | `week` | The week target as a large bar with hours, target range and percent; the 4-week heatmap large with weekday initials and per-week sums; today's hours and streak at the bottom | ![week](docs/preview-week.png) |
 | `degree` | ECTS earned of total as a big number with a progress bar, the average grade (or "noch keine Note"), the expected graduation date ("nicht verfügbar" / "abgeschlossen"), the course that has gone longest without a session (or "alle Kurse aktiv"), topics completed of total, and the programme name. Never picked by `auto`; all of it from `metrics/summary` (`ects`, `averageGrade`, `forecast`, `neglectedCourse`, `topics`) | ![degree](docs/preview-degree.png) |
 | `agenda` | Today's plan: the sessions planned for today from `GET /api/sessions` (up to six rows of `HH:MM–HH:MM`, course and topic; completed ones ticked, the running or next one inverted like the exam countdown, "+N weitere" when there are more, "keine Sessions geplant" when there are none), with today's hours, the streak and the next exam in a column on the right and the timer (or the week target) at the bottom. Empty when the key lacks the `Sessions.GetAll` scope | ![agenda](docs/preview-agenda.png) |
-| `review` | The weekly review: this week's hours large with the change against the week before (sign and an up/down marker), the course studied most, the session count and the streak on the right, the seven days Monday to Sunday as small bars, and StudyLife's own `weeklyReport` of the previous week in the footer. The hero figures are summed on the Pi from the session history for the current week, because the server's report always describes the last *completed* week | ![review](docs/preview-review.png) |
+| `review` | The weekly review: this week's hours large with the change against the week before (sign and an up/down marker), the course studied most, the session count and the streak on the right, the seven days Monday to Sunday as small bars, and StudyAtrium's own `weeklyReport` of the previous week in the footer. The hero figures are summed on the Pi from the session history for the current week, because the server's report always describes the last *completed* week | ![review](docs/preview-review.png) |
 | `courses` | Hours per course over the last 28 days as the whole frame - the same bar chart `exam` fits under its countdown block, given the full canvas and up to 9 rows, with the summed total as a small hero line up top. Never picked by `auto` | ![courses](docs/preview-courses.png) |
 | `milestone` | A celebration screen for the streak: the day count, huge, under "SERIEN-MEILENSTEIN" / "STREAK MILESTONE". `auto` only ever picks it on the one day the streak actually hits a round number (7, 14, 21, 30, 50, 100, 150, 200, 250, 300, 365, 500, 750, 1000); picking it by hand always shows today's real streak | ![milestone](docs/preview-milestone.png) |
 | `month` | The month target as a large bar with hours, range and percent, the days of the month as a strip (today's tick thicker), days left and what is still needed per day for the minimum; the footer compares with the previous month and, with a year of data, with the same month a year ago (`metrics/summary` -> `monthQuota`, `monthComparison`). Never picked by `auto` | ![month](docs/preview-month.png) |
@@ -119,7 +121,7 @@ the options:
 
 | Screen | When | What `run` does |
 | --- | --- | --- |
-| **Schlüssel abgelehnt** / **API key rejected** | StudyLife answered **401 or 403** | Shown right away, even with a cache: a rejected key never heals by waiting. Check `STUDYLIFE_API_KEY` and the key's scopes. Exit 1 |
+| **Schlüssel abgelehnt** / **API key rejected** | StudyAtrium answered **401 or 403** | Shown right away, even with a cache: a rejected key never heals by waiting. Check `STUDYLIFE_API_KEY` and the key's scopes. Exit 1 |
 | **Daten veraltet** / **Data is stale** | Every other failure, once the cached snapshot is older than `DISPLAY_STALE_ERROR_HOURS` (default 24) | Up to that age the cached dashboard is shown with the `· vor N min` marker as before; past it the screen names the age and the last error. Exit 0, the outage may end |
 | **Keine Daten** / **No data** | No cache at all and the API unreachable (a fresh install with a wrong URL, typically) | Shown, exit 1 |
 
@@ -140,11 +142,11 @@ when that is set, else `http://<hostname>.local:<port>/connect` from the Pi's ho
 dashboard. A key that *is* configured but rejected still gets the "rejected" screen above.
 
 With **no server configured either** (`STUDYLIFE_BASE_URL` empty and none chosen in the web
-interface) the same screen says "StudyLife-Server wählen unter:" / "Choose your StudyLife
+interface) the same screen says "StudyAtrium-Server wählen unter:" / "Choose your StudyAtrium
 server at:" and points at the web interface's server page (`/server` on the same origin the
 connect URL would use), again with the QR code. Same rules otherwise: exit 0, nothing is
 fetched, `/healthz` says `"status": "setup"` with `"server_configured": false`. See
-[Finding your StudyLife server](#finding-your-studylife-server).
+[Finding your StudyAtrium server](#finding-your-studyatrium-server).
 
 ## Web interface
 
@@ -155,7 +157,7 @@ time it was shown and the layout or screen kind in `current.json`; served at `/c
 with the cookie), then shows a preview of every layout plus `auto`, lets you pick one
 ("Übernehmen" saves the choice and refreshes the panel right away) and has a "Jetzt
 aktualisieren" button for a refresh without a change; while no key is stored, the page also
-says where to connect the account, like the setup screen; **Verbinden** connects the StudyLife
+says where to connect the account, like the setup screen; **Verbinden** connects the StudyAtrium
 account (see [Connecting the account](#connecting-the-account)); **Einstellungen** holds
 the settings that need no SSH (see [Settings in the web interface](#settings-in-the-web-interface)).
 It is reachable wherever the Pi is: on the LAN as `http://<hostname>.local:8795/`, or over
@@ -171,7 +173,7 @@ port-forward it to the internet.
   token under a key drawn at process start. Sessions therefore end when the service restarts,
   and the token itself is never stored in the browser. Every state-changing request also
   requires a same-origin `Sec-Fetch-Site`/`Origin` header.
-- **What it never does:** nothing on the layout page calls the StudyLife API. Previews are
+- **What it never does:** nothing on the layout page calls the StudyAtrium API. Previews are
   drawn from the cached payloads (or from sample data, marked as such, before the first
   successful fetch), and a refresh runs the same pipeline as the five-minute timer: fetch
   with cache fallback, render, show. The timer's `run` and the web service share the panel
@@ -183,7 +185,7 @@ port-forward it to the internet.
 - The footer shows the running version. With `DISPLAY_UPDATE_CHECK=true` it also says when a
   newer release exists on GitHub: asked at most once per six hours, cached in
   `update_check.json` in the state directory, a failed check is silent. Off by default,
-  because nothing on the Pi should talk to anything but the StudyLife instance unless you
+  because nothing on the Pi should talk to anything but the StudyAtrium instance unless you
   say so.
 - During [quiet hours](#quiet-hours-and-the-daily-clear) the page says "Ruhezeit bis HH:MM";
   "Übernehmen" and "Jetzt aktualisieren" still work - a click is an explicit request, only
@@ -191,15 +193,15 @@ port-forward it to the internet.
 
 ### Connecting the account
 
-The `Verbinden` page obtains the API key through StudyLife's consent flow (the same one
+The `Verbinden` page obtains the API key through StudyAtrium's consent flow (the same one
 `studylife-cli login` uses), so no key is ever displayed, copied or typed:
 
 1. "Verbindung starten" generates a PKCE pair and a single-use state (ten minutes, kept in
    the web process's memory only) and shows the link
    `https://<instance>/connect/client/studylife-display?redirect_uri=…&state=…&code_challenge=…&code_challenge_method=S256`.
-2. Open it on any device, sign in to StudyLife and approve. StudyLife redirects the browser
+2. Open it on any device, sign in to StudyAtrium and approve. StudyAtrium redirects the browser
    to `http://localhost:8795/connect/callback?assertion=…&state=…` - an address that browser
-   cannot load, on purpose: StudyLife accepts as a redirect URI only https or the
+   cannot load, on purpose: StudyAtrium accepts as a redirect URI only https or the
    [RFC 8252](https://www.rfc-editor.org/rfc/rfc8252#section-7.3) loopback, never the Pi's
    plain-http LAN address.
 3. Copy that whole address from the address bar and paste it into the form on the page. The
@@ -291,7 +293,7 @@ influences `status`, which is based on the fetch and the snapshot age only.
 `sessions_ok` is `false` when the last fetch got everything but the session list (a key
 without the `Sessions.GetAll` scope, typically): the dashboard is fine, only the agenda is
 empty, and the layouts page says why. Set the interval to a few minutes; the endpoint reads
-two small files and never calls StudyLife.
+two small files and never calls StudyAtrium.
 
 ### JSON API (for other software)
 
@@ -344,7 +346,7 @@ anyone typing an address:
 | | |
 | --- | --- |
 | Service type | `_studylife-display._tcp` |
-| Instance name | `StudyLife Display (<hostname>)` |
+| Instance name | `StudyAtrium Display (<hostname>)` |
 | Port | the port of `DISPLAY_WEB_BIND` (default `8795`) |
 | TXT `version` | the installed package version (the release tag) |
 | TXT `tls` | `true` when `DISPLAY_TLS` is on, else `false` |
@@ -464,18 +466,18 @@ data/command 22, chip select 8) are fixed in the library, not configurable here.
 and cabling are described in Pimoroni's own instructions; nothing about them is verified
 here.
 
-## Finding your StudyLife server
+## Finding your StudyAtrium server
 
 `STUDYLIFE_BASE_URL` is optional. A display that has no server yet can look for one on the
 local network, so a freshly flashed SD card needs no address typed anywhere.
 
-**What is announced.** A StudyLife server (3.22 and newer) can announce itself over mDNS /
+**What is announced.** A StudyAtrium server (3.22 and newer) can announce itself over mDNS /
 DNS-SD as the service `_studylife._tcp.local.`; the instance name is the server's configured
 name, the TXT records are `version`, `url` (the advertised base URL, scheme + host[:port]),
 `https` (`true`/`false`), `path` (`/`) and `id` (the stable 32-hex instance id, which may be
 missing for a moment after the server started). The announcement is **opt-in on the server
 side and off by default**; how to switch it on (plain Docker with host networking,
-docker-compose, a `hostNetwork` pod on Kubernetes) is in the StudyLife server's
+docker-compose, a `hostNetwork` pod on Kubernetes) is in the StudyAtrium server's
 `docs/MDNS.md` (repository `lukislp/studylife`). The Home Assistant integration reads the
 same announcement.
 
@@ -518,9 +520,9 @@ server says it announces: check that, and that UDP 5353 multicast is not filtere
 multicast on the display (for example a container on a bridge network) a search simply finds
 nothing.
 
-## StudyLife setup
+## StudyAtrium setup
 
-Register the display as a client on your StudyLife instance through
+Register the display as a client on your StudyAtrium instance through
 [studylife-developers](https://github.com/lukislp/studylife-developers), once:
 
 | Field | Value |
@@ -546,7 +548,7 @@ them (every key from before the layout that needs it existed) still drives every
 layout - the missing payload is treated as empty, the refresh logs a warning, the layout
 that needs it says which scope is missing, and for the session list `/healthz` and the
 layouts page say so too (`sessions_ok`). To get those layouts, add the scopes to the client
-in studylife-developers and connect again so that a key with all seven scopes is issued. Then choose the server (on the *Server* page, see [Finding your StudyLife server](#finding-your-studylife-server), or by putting the instance URL into `/etc/studylife-display.env`) and connect
+in studylife-developers and connect again so that a key with all seven scopes is issued. Then choose the server (on the *Server* page, see [Finding your StudyAtrium server](#finding-your-studyatrium-server), or by putting the instance URL into `/etc/studylife-display.env`) and connect
 from the web interface (`http://<hostname>.local:8795/connect`, see
 [Connecting the account](#connecting-the-account)); the key lands in the environment file
 by itself. Issuing a key by hand in studylife-developers and pasting it into
@@ -557,7 +559,7 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `STUDYLIFE_BASE_URL` | – | Optional: your instance, e.g. `https://studylife.example.com`. Empty = no server yet: the panel shows the "choose your server" screen and the web interface's *Server* page searches the network ([Finding your StudyLife server](#finding-your-studylife-server)). When set it always wins over a server chosen in the web interface |
+| `STUDYLIFE_BASE_URL` | – | Optional: your instance, e.g. `https://studylife.example.com`. Empty = no server yet: the panel shows the "choose your server" screen and the web interface's *Server* page searches the network ([Finding your StudyAtrium server](#finding-your-studyatrium-server)). When set it always wins over a server chosen in the web interface |
 | `STUDYLIFE_API_KEY` | – | Filled in by the connect page; or a key issued by hand. Empty until then |
 | `STUDYLIFE_API_KEY_INSTANCE` | – | Written by the connect page next to the key when the server is not set in the environment: the server that issued the key. A key is only used with that server. Do not set by hand |
 | `STUDYLIFE_TIMEZONE` | `Europe/Berlin` | Time zone of the **server**; its timestamps carry no offset |
@@ -589,14 +591,14 @@ Configuration (environment, or `/etc/studylife-display.env` on the Pi). The valu
 | `DISPLAY_SETUP_URL` | – | Optional: the exact URL the [setup screen](#setup-screen) shows and encodes in its QR code. Empty derives it from `DISPLAY_PUBLIC_BASE_URL` or the hostname and `DISPLAY_WEB_BIND` |
 | `HTTP_TIMEOUT_SECONDS` | `10` | Per request |
 
-`STUDYLIFE_TIMEZONE` matters more than it looks: StudyLife serialises every DateTime as naive
+`STUDYLIFE_TIMEZONE` matters more than it looks: StudyAtrium serialises every DateTime as naive
 local time of the server, and a freshly imaged Pi runs on UTC. "Today" is the calendar day in
 that zone, and a session from 23:30 to 00:30 counts half an hour on each of the two days.
 
 ## Flash the ready-made image
 
 Every release carries a ready-made SD-card image, `studylife-display-<version>.img.xz`: the
-stock Raspberry Pi OS Lite (64-bit, Trixie) with StudyLife Display already installed, SPI
+stock Raspberry Pi OS Lite (64-bit, Trixie) with StudyAtrium Display already installed, SPI
 enabled and the services enabled, set up for the default panel (the Waveshare 7.5" HAT V2).
 No SSH session and no installer are needed; the Wi-Fi, hostname, user and SSH settings go in
 through the Raspberry Pi Imager as for any other Raspberry Pi OS card.
@@ -628,10 +630,10 @@ through the Raspberry Pi Imager as for any other Raspberry Pi OS card.
 
    | Line | Meaning |
    | --- | --- |
-   | `STUDYLIFE_BASE_URL=https://studylife.example.com` | Optional: pre-seed your StudyLife server's address. Leave it out and the display finds the server itself (step 6); an address set here always wins over a server chosen later in the web interface |
+   | `STUDYLIFE_BASE_URL=https://studylife.example.com` | Optional: pre-seed your StudyAtrium server's address. Leave it out and the display finds the server itself (step 6); an address set here always wins over a server chosen later in the web interface |
    | `DISPLAY_WEB_TOKEN=...` | Password of the display's web interface, at least 12 characters. If you leave it out, a random one is generated (below) |
    | `DISPLAY_PANEL=...` | The attached panel, one of the keys in [Supported panels](#supported-panels); the default is `waveshare_7in5_v2` |
-   | `DISPLAY_ROTATE`, `DISPLAY_LANGUAGE`, `STUDYLIFE_TIMEZONE` | As in the [configuration table](#studylife-setup) |
+   | `DISPLAY_ROTATE`, `DISPLAY_LANGUAGE`, `STUDYLIFE_TIMEZONE` | As in the [configuration table](#studyatrium-setup) |
 
    On the next boot the values move into `/etc/studylife-display.env` and the lines in
    `setup.env` are replaced by a comment, so a token does not stay on the card. Only these
@@ -641,19 +643,19 @@ through the Raspberry Pi Imager as for any other Raspberry Pi OS card.
    image expands its filesystem and applies the Imager's settings; it may reboot once). A
    minute or so after it is up, the panel shows the [setup screen](#setup-screen): a QR code
    and the address of the display's web page. With no server address configured, the
-   screen says "choose your StudyLife server at <display>/server". Nothing is shown before
+   screen says "choose your StudyAtrium server at <display>/server". Nothing is shown before
    the account is connected, by design.
 6. **Pick the server and connect the account.** Open that address on a phone or PC in the
    same network, sign in with the web token (the one from `setup.env`, or the generated one: it is written to
    `studylife-display/web-token.txt` on the boot partition, and `sudo grep DISPLAY_WEB_TOKEN
    /etc/studylife-display.env` shows it over SSH; delete the file after noting it, anyone
    holding the card can read it), open the *Server* page, let it search the network (mDNS)
-   and pick your StudyLife server, then connect the account as in
+   and pick your StudyAtrium server, then connect the account as in
    [Connecting the account](#connecting-the-account). The first refresh runs by itself and
    replaces the setup screen with the dashboard. Zero configuration: no address to type.
 
-   Prerequisites for the search, details in [Finding your StudyLife
-   server](#finding-your-studylife-server): the StudyLife server's mDNS announcement is
+   Prerequisites for the search, details in [Finding your StudyAtrium
+   server](#finding-your-studyatrium-server): the StudyAtrium server's mDNS announcement is
    **opt-in** on the server side (`docs/MDNS.md` in the `lukislp/studylife` repository), and
    mDNS does not cross VLANs or subnets without a reflector (an Avahi reflector or the
    router's mDNS repeater). If nothing is found, type the address on the same page, or
@@ -891,13 +893,13 @@ before showing it, the layouts (and their golden frames) stay upright.
 | `Permission denied: /dev/spidev0.0` or GPIO errors | The `pi` user is not in `spi`/`gpio`: `sudo usermod -aG spi,gpio pi`, then log in again |
 | Panel stays white, service exits 0 | Driver-board switches (B / 0) and the FPC cable's orientation |
 | Header shows `· vor N min` | The last fetch failed; `journalctl -u studylife-display.service` names the reason, and so does `/healthz` |
-| Panel says **Schlüssel abgelehnt** / **API key rejected** | StudyLife answered 401/403: no key yet, the key is wrong or misses a scope (`Metrics.GetSummary`, `Sessions.GetHistory`, `TimerState.Get`); connect again from `/connect` (or fix `/etc/studylife-display.env`) and `sudo systemctl start studylife-display.service` |
+| Panel says **Schlüssel abgelehnt** / **API key rejected** | StudyAtrium answered 401/403: no key yet, the key is wrong or misses a scope (`Metrics.GetSummary`, `Sessions.GetHistory`, `TimerState.Get`); connect again from `/connect` (or fix `/etc/studylife-display.env`) and `sudo systemctl start studylife-display.service` |
 | `agenda` says **keine Sessions geplant** although sessions are planned; `/healthz` has `"sessions_ok": false` | The key lacks `Sessions.GetAll` (keys from before that scope was requested); the journal shows "could not fetch the session list". Add the scope to the client in studylife-developers and connect again |
-| Connect page: StudyLife shows an error instead of the consent screen | The client `studylife-display` is not registered on that instance, or the redirect URI (`http://localhost:8795/connect/callback`, or the `DISPLAY_PUBLIC_BASE_URL` one) is not on its list - the server matches it character for character |
+| Connect page: StudyAtrium shows an error instead of the consent screen | The client `studylife-display` is not registered on that instance, or the redirect URI (`http://localhost:8795/connect/callback`, or the `DISPLAY_PUBLIC_BASE_URL` one) is not on its list - the server matches it character for character |
 | Connect page says "Schlüssel übernommen" but the key never arrives | `journalctl -u studylife-display-credentials.service -n 20`; `systemctl status studylife-display-credentials.path` must be active. With the overlay on, the key is gone after a reboot: disable it, connect, re-enable |
-| Connect page says the pasted address does not belong to this attempt | The link was regenerated (or the web service restarted) in between; generate a new link and go through StudyLife again |
-| Panel says **StudyLife-Server wählen** / **Choose your StudyLife server** | No `STUDYLIFE_BASE_URL` and no server chosen yet: open the URL on the screen and use the *Server* page |
-| The *Server* page finds nothing | The server's announcement is opt-in (see its `docs/MDNS.md`), and mDNS does not cross VLANs without a reflector - see [Finding your StudyLife server](#finding-your-studylife-server). Type the address by hand meanwhile |
+| Connect page says the pasted address does not belong to this attempt | The link was regenerated (or the web service restarted) in between; generate a new link and go through StudyAtrium again |
+| Panel says **StudyAtrium-Server wählen** / **Choose your StudyAtrium server** | No `STUDYLIFE_BASE_URL` and no server chosen yet: open the URL on the screen and use the *Server* page |
+| The *Server* page finds nothing | The server's announcement is opt-in (see its `docs/MDNS.md`), and mDNS does not cross VLANs without a reflector - see [Finding your StudyAtrium server](#finding-your-studyatrium-server). Type the address by hand meanwhile |
 | After switching servers the panel asks to connect again | Intended: the old server's key is never used with another server; connect the account again |
 | Panel says **Daten veraltet** / **Data is stale** | No successful fetch for `DISPLAY_STALE_ERROR_HOURS`; the last error is on the screen and in `/healthz` |
 | Panel says **Keine Daten** / **No data** | The very first fetch failed and there is nothing to fall back to; `studylife-display check` shows the API error |
@@ -965,7 +967,7 @@ the web footer and `/healthz` report. The `version` line `uv sync` rewrites in `
 for the root project is noise from that and need not be committed.
 
 `tests/test_wire_fields.py` pins every JSON field name the code reads to the verified
-StudyLife wire format. StudyLife never errors on an unknown field, so this test is what
+StudyAtrium wire format. StudyAtrium never errors on an unknown field, so this test is what
 turns a typo into a red build instead of a dashboard that silently shows zeros.
 
 The fonts are IBM Plex Sans Regular and Bold (SIL Open Font License 1.1, see
