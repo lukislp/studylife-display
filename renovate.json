@@ -31,8 +31,8 @@
       "matchPackageNames": [
         "astral-sh/uv"
       ],
-      "enabled": true,
-      "automerge": true
+      "enabled": true
+
     }
   ]
 }
