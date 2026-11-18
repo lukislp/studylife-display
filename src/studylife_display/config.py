@@ -202,7 +202,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
-    # This single person's StudyLife instance and a READ-ONLY API key (Metrics.GetSummary,
+    # This single person's StudyAtrium instance and a READ-ONLY API key (Metrics.GetSummary,
     # Sessions.GetAll, Sessions.GetHistory, TimerState.Get; see studylife_client.SCOPES).
     # The display never writes anything back, so a key with more scopes than that is a
     # liability sitting on an SD card, not a convenience.
@@ -222,14 +222,14 @@ class Settings(BaseSettings):
     # answered with); not meant to be set in the environment.
     studylife_server_id: str = ""
 
-    # Every DateTime StudyLife sends is naive local time of the SERVER (no offset in the JSON).
+    # Every DateTime StudyAtrium sends is naive local time of the SERVER (no offset in the JSON).
     # Timestamps are interpreted in this zone explicitly, never with the Pi's own clock
     # setting - a freshly imaged Pi runs on UTC and would otherwise shift every session by an
     # hour or two and put late-evening sessions on the wrong calendar day.
     studylife_timezone: str = "Europe/Berlin"
 
     # Language of the rendered text. The default is German because that is the language of
-    # the StudyLife instance this was built for; "en" swaps every label.
+    # the StudyAtrium instance this was built for; "en" swaps every label.
     display_language: Language = "de"
 
     # "waveshare" drives the real panel, "file" writes the frame as a PNG (used by `preview`,
@@ -281,7 +281,7 @@ class Settings(BaseSettings):
 
     # Whether the web interface may ask GitHub (once per six hours, cached in the state
     # directory) whether a newer release exists. Off by default: nothing on the Pi talks to
-    # anything but the StudyLife instance unless the person installing opts in.
+    # anything but the StudyAtrium instance unless the person installing opts in.
     display_update_check: bool = False
 
     # Which layout to draw (see studylife_display.layouts). "auto" picks per refresh, in this
@@ -341,13 +341,13 @@ class Settings(BaseSettings):
     # a self-signed certificate still shows the browser's "not private" interstitial once,
     # which is a worse first impression than plain http for someone just testing the panel.
     # Turning it on is what makes DISPLAY_PUBLIC_BASE_URL below usable without a separate
-    # reverse proxy or Tailscale - StudyLife requires https for a non-loopback redirect URI.
+    # reverse proxy or Tailscale - StudyAtrium requires https for a non-loopback redirect URI.
     display_tls: bool = False
 
     # Optional: an https URL under which this web interface is reachable (a Tailscale name,
-    # say). When set, the connect page lets StudyLife redirect straight back to
+    # say). When set, the connect page lets StudyAtrium redirect straight back to
     # `<url>/connect/callback`; without it the browser lands on a localhost URL the person
-    # pastes into the page instead. StudyLife refuses a plain-http LAN address as a redirect
+    # pastes into the page instead. StudyAtrium refuses a plain-http LAN address as a redirect
     # URI (RFC 8252 allows only https or a loopback), hence the two modes.
     display_public_base_url: str = ""
 

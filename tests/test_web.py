@@ -352,7 +352,7 @@ class TestActions:
         """A "no-referrer" policy makes real browsers send Origin: null on the very same-origin
         form POSTs test_cross_site_post_is_a_403 checks above, which failed on real hardware in
         Chrome even though this suite's Client always sets a real Origin. "same-origin" still
-        keeps the page's URL from leaking to StudyLife."""
+        keeps the page's URL from leaking to StudyAtrium."""
         client.login()
         _, headers, _ = client.request("GET", "/")
         assert headers["referrer-policy"] == "same-origin"
@@ -559,7 +559,7 @@ class TestHealth:
             Status(
                 last_fetch_ok=False,
                 last_fetch_at=now,
-                last_error=LastError("transient", 503, "StudyLife API returned 503", now),
+                last_error=LastError("transient", 503, "StudyAtrium API returned 503", now),
             ),
         )
         status, _, body = client.request("GET", "/healthz")
@@ -569,7 +569,7 @@ class TestHealth:
         assert report["last_error"] == {
             "kind": "transient",
             "status": 503,
-            "message": "StudyLife API returned 503",
+            "message": "StudyAtrium API returned 503",
             "at": now.isoformat(),
         }
 
@@ -581,7 +581,7 @@ class TestHealth:
             Path(settings.display_state_path).parent,
             Status(
                 last_fetch_ok=False,
-                last_error=LastError("rejected", 403, "StudyLife API returned 403", now),
+                last_error=LastError("rejected", 403, "StudyAtrium API returned 403", now),
             ),
         )
         status, _, body = client.request("GET", "/healthz")
@@ -632,11 +632,13 @@ class TestFooterAndNotes:
     ) -> None:
         save_status(
             Path(settings.display_state_path).parent,
-            Status(last_error=LastError("rejected", 403, "StudyLife API returned 403", fixed_now)),
+            Status(
+                last_error=LastError("rejected", 403, "StudyAtrium API returned 403", fixed_now)
+            ),
         )
         client.login()
         _, _, body = client.request("GET", "/")
-        assert b"Letzter Fehler (17.09. 16:45): StudyLife API returned 403" in body
+        assert b"Letzter Fehler (17.09. 16:45): StudyAtrium API returned 403" in body
 
     def test_no_quiet_note_outside_quiet_hours(self, client: Client) -> None:
         client.login()

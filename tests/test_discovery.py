@@ -88,11 +88,11 @@ def test_instance_id_must_be_32_lowercase_hex() -> None:
 
 def test_a_complete_announcement_is_parsed() -> None:
     parsed = parse_announcement(
-        "My StudyLife._studylife._tcp.local.",
+        "My StudyAtrium._studylife._tcp.local.",
         txt(url="https://studylife.example.org", https="true", version="3.22.1", id=ID_A, path="/"),
     )
     assert parsed == Announcement(
-        "My StudyLife", "https://studylife.example.org", ID_A, "3.22.1", True
+        "My StudyAtrium", "https://studylife.example.org", ID_A, "3.22.1", True
     )
 
 

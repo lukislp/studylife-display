@@ -17,7 +17,7 @@ def zone(name: str) -> ZoneInfo:
 
 
 def parse_local(text: str, tz: ZoneInfo) -> datetime:
-    """Parse a naive StudyLife timestamp and attach `tz`.
+    """Parse a naive StudyAtrium timestamp and attach `tz`.
 
     A timestamp that unexpectedly carries an offset (a future server change, a proxy that
     rewrites JSON) is honoured and converted rather than double-shifted.

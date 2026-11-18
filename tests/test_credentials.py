@@ -16,7 +16,7 @@ from studylife_display.credentials import rewrite_env_line
 from studylife_display.main import main
 
 ENV_TEXT = (
-    "# StudyLife instance and key\n"
+    "# StudyAtrium instance and key\n"
     "STUDYLIFE_BASE_URL=https://studylife.test\n"
     "STUDYLIFE_API_KEY=replace-me\n"
     "# STUDYLIFE_API_KEY=commented-out\n"

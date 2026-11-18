@@ -13,7 +13,7 @@ def black_pixels(image: Image.Image) -> int:
 @pytest.mark.parametrize("kind", sorted(ERROR_KINDS))
 @pytest.mark.parametrize("language", ["de", "en"])
 def test_every_kind_renders_a_panel_sized_frame(kind: str, language: str) -> None:
-    image = render_error(kind, "HTTP 403", language, last_error="StudyLife API returned 403")
+    image = render_error(kind, "HTTP 403", language, last_error="StudyAtrium API returned 403")
     assert image.size == (800, 480)
     assert image.mode == "1"
     assert black_pixels(image) > 2000  # a headline and two lines of text, not a blank frame

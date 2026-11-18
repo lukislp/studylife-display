@@ -1702,7 +1702,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._send(status, body, content_type="application/json")
             return
         if parts.path == "/connect/callback":
-            # StudyLife's redirect: no cookie (SameSite=Strict never travels cross-site),
+            # StudyAtrium's redirect: no cookie (SameSite=Strict never travels cross-site),
             # the single-use state is the binding. The outcome page names it either way.
             outcome = app.finish_connect(parts.query)
             text = app.text

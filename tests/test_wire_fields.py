@@ -1,4 +1,4 @@
-"""Pins the JSON field names the dashboard reads to the verified StudyLife wire format.
+"""Pins the JSON field names the dashboard reads to the verified StudyAtrium wire format.
 
 StudyLife never errors on an unknown field - it simply is not there - so a typo like
 `streak.curent` would silently render as 0 forever. Two assertions guard against that:

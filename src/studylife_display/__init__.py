@@ -1,4 +1,4 @@
-"""StudyLife e-paper dashboard for the Waveshare 7.5 inch HAT V2."""
+"""StudyAtrium e-paper dashboard for the Waveshare 7.5 inch HAT V2."""
 
 from importlib.metadata import PackageNotFoundError, version
 

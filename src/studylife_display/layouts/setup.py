@@ -126,7 +126,7 @@ def render_setup(
 ) -> Image.Image:
     """An 800x480 mode "1" frame: headline, "connect at:", `url` large on the left, its QR
     code on the right, the hostname in a small line at the bottom, `now` in the header.
-    `choose_server` swaps the line for "choose your StudyLife server at:" - the variant for
+    `choose_server` swaps the line for "choose your StudyAtrium server at:" - the variant for
     a display that has no server configured yet (the frame is otherwise the same)."""
     t = TEXT[language]
     words = SETUP_TEXT[language]

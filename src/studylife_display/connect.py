@@ -1,4 +1,4 @@
-"""Connecting the display to a StudyLife account from the web interface, without copying
+"""Connecting the display to a StudyAtrium account from the web interface, without copying
 a key by hand.
 
 Same wire shape as studylife-cli's login and studylife-telegram's linking (StudyLife's
@@ -108,7 +108,7 @@ def build_connect_url(
 
 
 def loopback_redirect_uri(port: int) -> str:
-    """Paste mode: the RFC 8252 loopback URI StudyLife accepts for a client without an
+    """Paste mode: the RFC 8252 loopback URI StudyAtrium accepts for a client without an
     https callback. The port is the web interface's, so that a browser that does reach the
     Pi as localhost (an SSH port forward) lands on the callback route directly."""
     return f"http://localhost:{port}{CALLBACK_PATH}"
@@ -202,7 +202,7 @@ class CallbackResult:
 
 
 def parse_callback(text: str) -> CallbackResult:
-    """What StudyLife put into the redirect: from the whole pasted URL, or from just its
+    """What StudyAtrium put into the redirect: from the whole pasted URL, or from just its
     query string. ConnectError("missing_assertion") when there is no assertion in it."""
     text = text.strip()
     if not text:

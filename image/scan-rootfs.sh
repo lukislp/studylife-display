@@ -36,7 +36,7 @@ if [ -e "$dbus_mid" ] && [ ! -L "$dbus_mid" ] && [ -s "$dbus_mid" ]; then
 fi
 [ -e "$ROOT/var/lib/systemd/random-seed" ] && fail "/var/lib/systemd/random-seed (same seed on every card)"
 
-# --- StudyLife secrets and state -----------------------------------------------------
+# --- StudyAtrium secrets and state -----------------------------------------------------
 for f in etc/studylife-display-tls.pem etc/studylife-display-tls.key \
          etc/avahi/services/studylife-display.service; do
   [ -e "$ROOT/$f" ] && fail "/$f (per-device, created on first boot)"

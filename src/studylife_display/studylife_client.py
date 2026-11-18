@@ -71,7 +71,7 @@ class StudyLifeClient:
         return response
 
     def get_metrics_summary(self) -> dict[str, Any]:
-        """Streak, weekly hours, week quota, upcoming course goals - the one place StudyLife
+        """Streak, weekly hours, week quota, upcoming course goals - the one place StudyAtrium
         calculates them (MetricsController). Note that the summary has no "today" figure;
         that one is derived from the session history below."""
         return dict(self._request("GET", "/api/metrics/summary").json())

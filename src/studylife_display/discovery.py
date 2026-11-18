@@ -1,4 +1,4 @@
-"""Finding the StudyLife server on the local network (mDNS / DNS-SD).
+"""Finding the StudyAtrium server on the local network (mDNS / DNS-SD).
 
 A StudyLife server can announce `_studylife._tcp.local.` (opt-in on the server side, see its
 docs/MDNS.md): instance name, port and the TXT records `version`, `url` (advertised base
@@ -53,7 +53,7 @@ _NAME_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f]")
 
 
 class InvalidServerUrl(ValueError):
-    """A URL that is not a plain StudyLife base URL; the message says why."""
+    """A URL that is not a plain StudyAtrium base URL; the message says why."""
 
 
 def validate_server_url(value: str) -> str:
