@@ -92,7 +92,7 @@ def test_a_complete_announcement_is_parsed() -> None:
         txt(url="https://studylife.example.org", https="true", version="3.22.1", id=ID_A, path="/"),
     )
     assert parsed == Announcement(
-        "My StudyLife", "https://studylife.example.org", ID_A, "3.22.1", True
+        "My StudyAtrium", "https://studylife.example.org", ID_A, "3.22.1", True
     )
 
 

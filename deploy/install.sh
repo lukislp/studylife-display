@@ -184,7 +184,7 @@ if [ "$IMAGE_MODE" -eq 1 ]; then
 elif [ ! -f "$TLS_CERT" ] || [ ! -f "$TLS_KEY" ]; then
   echo "==> self-signed TLS certificate for DISPLAY_TLS=true ($TLS_CERT)"
   # Not for trust (it is self-signed; browsers show the interstitial once regardless) - only
-  # for StudyLife's redirect-URI policy, which accepts https from anywhere but plain http
+  # for StudyAtrium's redirect-URI policy, which accepts https from anywhere but plain http
   # only from localhost. 10 years so nobody has to think about renewing it; the mDNS name
   # covers the URL everything else on this Pi already uses (the setup screen's QR code, the
   # suggested DISPLAY_PUBLIC_BASE_URL). IP SANs are not worth it - a DHCP lease can change.
