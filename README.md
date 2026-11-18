@@ -973,6 +973,10 @@ turns a typo into a red build instead of a dashboard that silently shows zeros.
 The fonts are IBM Plex Sans Regular and Bold (SIL Open Font License 1.1, see
 `src/studylife_display/fonts/OFL.txt`).
 
+## Privacy
+
+See [PRIVACY.md](PRIVACY.md) for what the display stores on the Pi and where data goes.
+
 ## Licence
 
 AGPL-3.0-or-later — see [LICENSE](LICENSE).
