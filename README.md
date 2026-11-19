@@ -975,7 +975,9 @@ The fonts are IBM Plex Sans Regular and Bold (SIL Open Font License 1.1, see
 
 ## Privacy
 
-See [PRIVACY.md](PRIVACY.md) for what the display stores on the Pi and where data goes.
+See [PRIVACY.md](PRIVACY.md) for what the display stores on the Pi (including the plaintext web-token.txt on the boot partition) and where data goes (the update hosts if you enable auto-update, and the mDNS search and probe on your LAN).
+
+**Controller:** the operator of your instance. **Publisher:** see the imprint at <https://lktec.org/impressum>.
 
 ## Licence
 
